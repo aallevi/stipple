@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- A leaf: two arcs plus a transformed group, so the importer has to handle
+       curves, a nested transform, and more than one subpath. -->
+  <path d="M50 8 C 20 30, 20 70, 50 92 C 80 70, 80 30, 50 8 Z" fill="#222"/>
+  <g transform="translate(50 50) rotate(45) scale(0.34)">
+    <rect x="-10" y="-38" width="20" height="76" rx="6" fill="#222"/>
+  </g>
+</svg>
