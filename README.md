@@ -55,6 +55,40 @@ Requires Node 20+ and a Rust toolchain.
 
 ---
 
+## Upgrading an installed copy
+
+The bundle in `/Applications` is disposable build output. **This project directory is the
+only master copy** — the app has no auto-update and no persisted state inside the bundle
+(projects are `.stipple` files you save wherever you like), so upgrading is just building
+again and replacing it.
+
+```bash
+cd ~/Documents/Claude/Projects/stipplingtool
+npm run install-app
+```
+
+That quits Stipple if it is open, rebuilds, and swaps the bundle in `/Applications`.
+`/Applications` is group-writable by admin users, so no `sudo`. Options:
+
+| | |
+|---|---|
+| `npm run install-app -- --launch` | reopen the app when it is done |
+| `npm run install-app -- --skip-build` | install whatever is already built |
+
+The copy is staged beside the destination and moved into place, so an interrupted install
+cannot leave a half-written bundle behind.
+
+**Working with Claude on it.** Point a session at this directory and describe the change;
+the source gets edited here, and `npm run install-app` is what puts it in your Applications
+folder. Nothing about the installed copy needs to be touched by hand — and nothing in it is
+worth preserving, so it is always safe to replace.
+
+While iterating, `npm run app` is faster than a full rebuild, and `npm run dev` (browser at
+<http://localhost:1420>) is faster still. Only native file dialogs and TIFF decoding need
+the desktop shell.
+
+---
+
 ## Using it
 
 Open an image (the app starts on a synthetic test card so there is always something on

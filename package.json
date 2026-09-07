@@ -12,7 +12,8 @@
     "verify": "node scripts/verify.mjs",
     "typecheck": "tsc --noEmit",
     "app": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "install-app": "bash scripts/install.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",
