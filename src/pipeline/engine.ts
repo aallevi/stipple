@@ -67,6 +67,8 @@ export class Engine {
   private renderW = 0;
   private renderH = 0;
 
+  /** Background the `below` readbacks were composited over, to spot a change. */
+  private belowGround = '';
   private viewport: Viewport = { zoom: 1, panX: 0, panY: 0 };
   private interactive = false;
   private needsRender = true;
@@ -89,6 +91,7 @@ export class Engine {
     this.voronoi = floatRender && floatBlend ? new VoronoiGPU(gl) : null;
 
     this.atlas.sync(store.get().shapes, this.shapeBitmaps);
+    this.belowGround = store.get().canvas.background.join(',');
     for (const layer of store.get().layers) this.cacheFor(layer.id);
   }
 
@@ -173,6 +176,26 @@ export class Engine {
       if (level >= Dirty.Density) cache.densityKey = '';
       if (level >= Dirty.Points) cache.pointsKey = '';
     }
+
+    // A `below` layer's density is a readback of the stack under it, and its
+    // cache key describes only the layer's own prefilter. `Store.markLayer`
+    // cascades every *layer* edit upward, which covers most of it — but two
+    // things repaint the stack without touching any layer: editing a shape,
+    // which every layer that uses it is drawn from, and changing the background,
+    // which the readback is composited over. Neither reaches the cascade, so
+    // they are caught here instead.
+    const ground = project.canvas.background.join(',');
+    if (change.shapes || ground !== this.belowGround) {
+      this.belowGround = ground;
+      for (const layer of project.layers) {
+        if (layer.input !== 'below') continue;
+        const cache = this.caches.get(layer.id);
+        if (!cache) continue;
+        cache.densityKey = '';
+        cache.pointsKey = '';
+      }
+    }
+
     this.needsRender = true;
   }
 
@@ -531,10 +554,18 @@ export class Engine {
     }
   }
 
-  /** Make sure every layer's points exist at full quality before exporting. */
+  /**
+   * Make sure every layer's points exist at full quality before exporting.
+   *
+   * Deliberately not a forced render: every path that can invalidate a cache
+   * also sets `needsRender`, so a second call with nothing changed in between is
+   * free. That matters for plate export, which runs the exporter once per screen
+   * plus a proof — forcing here made a four-ink job redraw the whole stack six
+   * times over to arrive at the same pixels.
+   */
   prepareForExport(): void {
     this.setInteractive(false);
-    this.render(true);
+    this.render();
   }
 
   /**

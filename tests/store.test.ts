@@ -173,3 +173,57 @@ describe('project serialisation', () => {
     expect(restored.layers[0].distribution.spacing).toBe(7);
   });
 });
+
+describe('Store history', () => {
+  const bigRaster = (id = 'r1'): Extract<ShapeDef, { kind: 'raster' }> => ({
+    kind: 'raster',
+    id,
+    name: 'Stamp',
+    // Stands in for a real imported PNG, which is what made snapshots heavy.
+    data: `data:image/png;base64,${'A'.repeat(4096)}`,
+    width: 8,
+    height: 8,
+  });
+
+  it('does not spend an undo step on the display unit', () => {
+    const store = new Store(defaultProject());
+    expect(store.canUndo()).toBe(false);
+
+    // The unit changes how lengths are written and nothing about the document.
+    store.updateCanvas({ units: 'in' });
+    expect(store.get().canvas.units).toBe('in');
+    expect(store.canUndo()).toBe(false);
+
+    // Anything that does change the document still does.
+    store.updateCanvas({ dpi: 600 });
+    expect(store.canUndo()).toBe(true);
+  });
+
+  it('carries a raster shape\'s pixels back through undo and redo', () => {
+    const raster = bigRaster();
+    const store = new Store(defaultProject());
+    store.updateShapes([...store.get().shapes, raster]);
+    store.updateCanvas({ dpi: 600 });
+
+    const dataOf = (): string | undefined => {
+      const s = store.get().shapes.find((x) => x.id === raster.id);
+      return s?.kind === 'raster' ? s.data : undefined;
+    };
+    expect(dataOf()).toBe(raster.data);
+
+    // Snapshots hold a reference rather than the base64 itself, so the round
+    // trip has to put the real pixels back or the stamp renders as nothing.
+    store.undo();
+    expect(store.get().canvas.dpi).toBe(300);
+    expect(dataOf()).toBe(raster.data);
+
+    store.redo();
+    expect(store.get().canvas.dpi).toBe(600);
+    expect(dataOf()).toBe(raster.data);
+
+    // And back past the import, where the shape should be gone entirely.
+    store.undo();
+    store.undo();
+    expect(store.get().shapes.some((x) => x.id === raster.id)).toBe(false);
+  });
+});

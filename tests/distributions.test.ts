@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultDistribution, defaultMask } from '../src/core/defaults';
 import { generateHalftone } from '../src/dist/halftone';
 import { generateJittered } from '../src/dist/jittered';
-import { POINT_STRIDE, inkAt, quantise, type GenContext } from '../src/dist/types';
+import { POINT_STRIDE, allocPoints, inkAt, quantise, type GenContext } from '../src/dist/types';
 import { DensityMap } from '../src/image/density';
 import type { HalftoneParams, JitteredParams } from '../src/core/types';
 
@@ -146,5 +146,34 @@ describe('generateHalftone', () => {
     const fine = generateHalftone(
       { ...defaultDistribution('halftone'), lineature: 60 } as HalftoneParams, ctx(density), 300);
     expect(fine.count).toBeGreaterThan(coarse.count * 3);
+  });
+});
+
+/**
+ * Generators size their buffer for the worst case and usually write a small
+ * fraction of it. `finish()` used to hand back a `subarray`, which shares the
+ * parent `ArrayBuffer` — so the engine, which holds a layer's points for the
+ * life of the layer, kept the whole over-estimate alive with them.
+ */
+describe('Writer.finish', () => {
+  it('releases the unwritten remainder of an over-estimate', () => {
+    const { write } = allocPoints(100_000);
+    write.push(1, 2, 0.5, 0, 0.25);
+    const buf = write.finish();
+
+    expect(buf.count).toBe(1);
+    expect(buf.data.length).toBe(POINT_STRIDE);
+    expect(buf.data.buffer.byteLength).toBe(POINT_STRIDE * 4);
+  });
+
+  it('still returns the points that were written', () => {
+    const { write } = allocPoints(8);
+    write.push(1, 2, 0.5, 0.25, 0.75);
+    write.push(3, 4, 0.6, 0.35, 0.85);
+    const buf = write.finish();
+
+    expect(buf.count).toBe(2);
+    expect(Array.from(buf.data.slice(0, 5))).toEqual([1, 2, 0.5, 0.25, 0.75]);
+    expect(buf.data[POINT_STRIDE]).toBe(3);
   });
 });

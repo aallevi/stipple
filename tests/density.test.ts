@@ -171,3 +171,66 @@ describe('ink separation', () => {
     expect(DensityMap.fromSource(solid(0.5, 0.5, 0.5), base).sample(2, 2)).toBeCloseTo(0.5, 1);
   });
 });
+
+/**
+ * A single bright column on a flat ground — the case that separates a filter's
+ * strength from its radius, because a thin line is exactly what a wide blur
+ * flattens and a narrow one does not.
+ */
+function brightLine(w = 96, h = 9, bg = 0.2, fg = 0.6): ImageSource {
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const v = Math.round((x === (w >> 1) ? fg : bg) * 255);
+      const i = (y * w + x) * 4;
+      rgba[i] = rgba[i + 1] = rgba[i + 2] = v;
+      rgba[i + 3] = 255;
+    }
+  }
+  return { width: w, height: h, rgba };
+}
+
+/** Peak value and halo width along the middle row. */
+function profile(m: DensityMap, ground: number): { peak: number; halo: number } {
+  const row = m.height >> 1;
+  let peak = -Infinity;
+  let halo = 0;
+  for (let x = 0; x < m.width; x++) {
+    const v = m.lum[row * m.width + x];
+    if (v > peak) peak = v;
+    if (v < ground - 1e-4) halo += 1;
+  }
+  return { peak, halo };
+}
+
+/**
+ * `pixelScale` exists so a spatial filter means the same thing whatever
+ * resolution the input happens to be. For sharpen it used to multiply the
+ * *strength* instead of the radius, so a 4000px photo on a 1024px canvas was
+ * sharpened four times as hard as the slider said while the halo stayed two
+ * pixels wide.
+ */
+describe('sharpen under pixelScale', () => {
+  const sharpen = 0.05;
+  const fg = 0.6;
+
+  it('keeps strength bounded by the amount, whatever the scale', () => {
+    // unsharp adds (src - blurred) * 2 * amount, and that difference cannot
+    // exceed 1, so no pixel may rise more than 2 * amount above the source
+    // peak. Scaling the amount by pixelScale broke exactly this bound.
+    const bound = fg + 2 * sharpen;
+    for (const pixelScale of [1, 2, 4, 8]) {
+      const m = DensityMap.fromSource(brightLine(), { ...base, sharpen }, pixelScale);
+      expect(profile(m, 0.2).peak).toBeLessThanOrEqual(bound);
+    }
+  });
+
+  it('widens the halo instead', () => {
+    const near = profile(DensityMap.fromSource(brightLine(), { ...base, sharpen }, 1), 0.2);
+    const far = profile(DensityMap.fromSource(brightLine(), { ...base, sharpen }, 4), 0.2);
+    // The radius is what tracks the scale, so a denser source spreads the
+    // halo further while the overshoot at the line stays put.
+    expect(far.halo).toBeGreaterThan(near.halo * 2);
+    expect(far.peak).toBeCloseTo(near.peak, 1);
+  });
+});

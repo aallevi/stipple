@@ -1,6 +1,7 @@
 import type { ColorParams, Layer, RGBA, ShapeDef } from '../core/types';
 import { assignInk, buildInkSet, type InkSet } from '../core/color';
 import { mulberry32 } from '../core/rng';
+import { POINT_STRIDE } from '../dist/types';
 import { lineSkeleton, SHAPE_PAD, SHAPE_R } from '../shape/rasterize';
 
 /**
@@ -36,6 +37,37 @@ export function inkSetFor(layer: Layer): InkSet | null {
   return buildInkSet(c.palette, c.paper ?? null);
 }
 
+/**
+ * Which ink every point of a spot layer takes, computed once.
+ *
+ * Splitting a stack into films runs the exporter once per screen, and each run
+ * used to ask every dot again which ink it was — an Oklab conversion and a
+ * two-ink solve per dot, per plate, for an answer that cannot change between
+ * them. Doing it once here and handing the result to `evaluatePoint` makes the
+ * separation linear in points rather than in points times plates.
+ *
+ * Entries are indices into the ink set; anything at or past `inkCount` is bare
+ * paper. Returns null for a layer that does not print from a palette.
+ */
+export function assignPlates(
+  layer: Layer,
+  points: { data: Float32Array; count: number },
+  sampleImage: (x: number, y: number) => [number, number, number],
+  inks: InkSet | null,
+): Int16Array | null {
+  if (layer.color.mode !== 'spot' || !inks) return null;
+  const out = new Int16Array(points.count);
+  const d = points.data;
+  const byTone = layer.color.matchBy === 'tone';
+  const mixing = layer.color.mixing;
+  for (let i = 0; i < points.count; i++) {
+    const o = i * POINT_STRIDE;
+    const [r, g, b] = sampleImage(d[o], d[o + 1]);
+    out[i] = assignInk(inks, r, g, b, mixing, d[o + 4], byTone);
+  }
+  return out;
+}
+
 export function evaluatePoint(
   layer: Layer,
   x: number,
@@ -45,6 +77,8 @@ export function evaluatePoint(
   rand: number,
   sampleImage?: (x: number, y: number) => [number, number, number],
   inks?: InkSet | null,
+  /** A precomputed ink index from `assignPlates`, to skip the per-dot solve. */
+  presetInk?: number,
 ): EvaluatedPoint {
   const s = layer.size;
   const ink = s.invert ? tone : 1 - tone;
@@ -63,11 +97,16 @@ export function evaluatePoint(
 
   let plate = -1;
   let alpha = layer.color.alpha * layer.color.color[3];
-  if (layer.color.mode === 'spot' && inks && sampleImage) {
-    const [sr, sg, sb] = sampleImage(x, y);
-    const idx = assignInk(inks, sr, sg, sb, layer.color.mixing, rand, layer.color.matchBy === 'tone');
-    if (idx >= inks.inkCount) alpha = 0; // bare paper: nothing is printed here
-    else plate = idx;
+  if (layer.color.mode === 'spot' && inks) {
+    let idx = presetInk;
+    if (idx === undefined && sampleImage) {
+      const [sr, sg, sb] = sampleImage(x, y);
+      idx = assignInk(inks, sr, sg, sb, layer.color.mixing, rand, layer.color.matchBy === 'tone');
+    }
+    if (idx !== undefined) {
+      if (idx >= inks.inkCount) alpha = 0; // bare paper: nothing is printed here
+      else plate = idx;
+    }
   }
 
   return {

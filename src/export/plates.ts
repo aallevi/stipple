@@ -1,6 +1,7 @@
 import type { Layer, Project, RGBA } from '../core/types';
 import { oklab } from '../core/color';
 import type { Engine } from '../pipeline/engine';
+import { assignPlates, inkSetFor } from './geometry';
 import { exportSVG, type PlateFilter } from './svg';
 
 /**
@@ -45,7 +46,7 @@ export function collectPlates(project: Project): PlateSet {
         );
       }
     }
-    const plates = palette.map((c, i) => ({ name: inkName(c, i), color: c }));
+    const plates = palette.map((c) => ({ name: inkName(c), color: c }));
     const solids = live.filter((l) => l.color.mode === 'solid');
     for (const l of live) {
       if (l.color.mode !== 'spot' && l.color.mode !== 'solid') {
@@ -85,7 +86,7 @@ export function collectPlates(project: Project): PlateSet {
     let idx = plates.findIndex((p) => sameColor(p.color, c));
     if (idx < 0) {
       idx = plates.length;
-      plates.push({ name: l.name || inkName(c, idx), color: c });
+      plates.push({ name: l.name || inkName(c), color: c });
     }
     routeOf.set(l.id, idx);
   }
@@ -96,6 +97,34 @@ export type PlateExport = {
   files: { name: string; data: string }[];
   warnings: string[];
 };
+
+function baseFrom(name: string | undefined): string {
+  return (name ?? 'stipple').replace(/\.[a-z]+$/i, '');
+}
+
+function plateFile(base: string, index: number, plate: Plate): string {
+  return `${base}-${index + 1}-${slug(plate.name)}.svg`;
+}
+
+/**
+ * What `exportPlates` would write, without building any of it.
+ *
+ * The caller has to confirm before a folder of files appears, and confirming
+ * needs only the names and the warnings. Generating every film first and then
+ * asking — as this used to — built megabytes of SVG that a cancelled dialog
+ * threw straight away.
+ */
+export function planPlates(project: Project, baseName?: string): {
+  files: string[];
+  warnings: string[];
+} {
+  const set = collectPlates(project);
+  const base = baseFrom(baseName);
+  return {
+    files: set.plates.map((p, i) => plateFile(base, i, p)),
+    warnings: set.warnings,
+  };
+}
 
 /**
  * One film per screen, plus a proof.
@@ -114,18 +143,33 @@ export function exportPlates(
     return { files: [], warnings: ['Nothing to separate: no layer prints in a single ink.'] };
   }
 
-  const base = (opts.baseName ?? 'stipple').replace(/\.[a-z]+$/i, '');
+  const base = baseFrom(opts.baseName);
   const margin = Math.round(Math.max(24, project.canvas.dpi * 0.25));
   const files: { name: string; data: string }[] = [];
+
+  // Which ink each dot takes is a property of the dot, not of the plate being
+  // written, so it is settled once here and reused by every film and the proof.
+  engine.prepareForExport();
+  const inkIndex = new Map<string, Int16Array>();
+  for (const layer of project.layers) {
+    if (!layer.visible || layer.opacity <= 0) continue;
+    const points = engine.pointsFor(layer.id);
+    if (!points) continue;
+    const assigned = assignPlates(
+      layer, points, (x, y) => engine.sampleSourceColor(x, y), inkSetFor(layer),
+    );
+    if (assigned) inkIndex.set(layer.id, assigned);
+  }
 
   set.plates.forEach((plate, index) => {
     const filter: PlateFilter = { index, route: set.route };
     files.push({
-      name: `${base}-${index + 1}-${slug(plate.name)}.svg`,
+      name: plateFile(base, index, plate),
       data: exportSVG(engine, project, {
         plate: filter,
         mono: true,
         margin,
+        inkIndex,
         label: `${base}  ${index + 1}/${set.plates.length}  ${plate.name}`,
       }),
     });
@@ -139,6 +183,7 @@ export function exportPlates(
       name: `${base}-proof.svg`,
       data: exportSVG(engine, project, {
         margin,
+        inkIndex,
         label: `${base}  proof  ${set.plates.length} inks`,
       }),
     });
@@ -178,7 +223,7 @@ function modeLabel(mode: string): string {
  * A rough name for an ink, so films are called `poster-2-magenta.svg` rather
  * than `poster-2.svg` and cannot be taped to the wrong screen.
  */
-export function inkName(c: RGBA, index = 0): string {
+export function inkName(c: RGBA): string {
   const [r, g, b] = [c[0], c[1], c[2]];
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
@@ -205,8 +250,7 @@ export function inkName(c: RGBA, index = 0): string {
   if (h < 200) return dark ? 'teal' : 'cyan';
   if (h < 255) return dark ? 'navy' : 'blue';
   if (h < 290) return dark ? 'aubergine' : 'violet';
-  if (h < 345) return dark ? 'plum' : 'magenta';
-  return `ink ${index + 1}`;
+  return dark ? 'plum' : 'magenta';
 }
 
 function slug(s: string): string {

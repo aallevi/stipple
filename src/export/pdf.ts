@@ -41,8 +41,13 @@ export function exportPDF(engine: Engine, project: Project): PDFResult {
   const content: string[] = [];
   const sampleColor = (x: number, y: number): [number, number, number] =>
     engine.sampleSourceColor(x, y);
-  // Distinct layer opacities become distinct ExtGState entries. Scoped to this
-  // export so repeated exports cannot accumulate stale states.
+  // Distinct opacities become distinct ExtGState entries. Scoped to this export
+  // so repeated exports cannot accumulate stale states.
+  //
+  // PDF has no per-operation alpha, so the value has to be the layer's opacity
+  // *and* the mark's own — `color.alpha` times the colour's alpha channel, which
+  // is what the shader and the SVG exporter both apply. Setting only the layer's,
+  // as this used to, exported a half-transparent layer fully opaque.
   const gsValues: number[] = [];
   const gsIndex = (opacity: number): number => {
     const rounded = Math.round(opacity * 100) / 100;
@@ -78,21 +83,28 @@ export function exportPDF(engine: Engine, project: Project): PDFResult {
     const inks = inkSetFor(layer);
 
     content.push('q');
-    if (layer.opacity < 1) content.push(`/GS${gsIndex(layer.opacity)} gs`);
 
     const d = points.data;
     let lastColor = '';
+    let lastGS = '';
     for (let i = 0; i < points.count; i++) {
       const o = i * POINT_STRIDE;
       const p = evaluatePoint(layer, d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], sampleColor, inks);
       if (p.size <= 0.01 || p.alpha <= 0.001) continue;
 
-      // Only emit a colour operator when it actually changes — for a solid-colour
-      // layer that is once for the whole layer rather than once per point.
+      // Only emit a colour or alpha operator when it actually changes — for a
+      // solid-colour layer that is once for the whole layer rather than once per
+      // point. `q`/`Q` bracket the layer, so both reset with it.
       const col = `${f(p.rgb[0])} ${f(p.rgb[1])} ${f(p.rgb[2])} rg`;
       if (col !== lastColor) {
         content.push(col);
         lastColor = col;
+      }
+      const opacity = p.alpha * layer.opacity;
+      const gs = opacity < 1 ? `/GS${gsIndex(opacity)} gs` : '';
+      if (gs !== lastGS) {
+        if (gs) content.push(gs);
+        lastGS = gs;
       }
 
       const s = p.size * PT_PER_PX;

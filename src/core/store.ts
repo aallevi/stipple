@@ -74,6 +74,15 @@ export class Store {
 
   private undoStack: string[] = [];
   private redoStack: string[] = [];
+  /**
+   * Raster shapes' pixels, held out of the history.
+   *
+   * A `raster` ShapeDef carries its whole bitmap as a base64 data URL, so a
+   * snapshot that included it made every undo entry megabytes heavier — a
+   * hundred of those for one imported stamp. The pixels never change once
+   * imported, so the snapshot keeps a reference and the bytes live here.
+   */
+  private blobs = new Map<string, string>();
   private lastCommitKey = '';
   private lastCommitTime = 0;
   /** Slider drags produce hundreds of changes; collapse them into one undo step. */
@@ -172,7 +181,11 @@ export class Store {
   }
 
   updateCanvas(patch: Partial<Project['canvas']>): void {
-    this.commit('canvas');
+    // The unit is a display preference — it changes how lengths are written and
+    // nothing about the document — so it is not worth an undo step of its own.
+    // It still notifies, because the panels are built against one unit.
+    const displayOnly = Object.keys(patch).length === 1 && 'units' in patch;
+    if (!displayOnly) this.commit('canvas');
     const sizeChanged = ('width' in patch && patch.width !== this.project.canvas.width)
       || ('height' in patch && patch.height !== this.project.canvas.height);
     this.project.canvas = { ...this.project.canvas, ...patch };
@@ -254,6 +267,27 @@ export class Store {
 
   // -- history -------------------------------------------------------------
 
+  /** The project as a history entry, with raster pixels swapped for a reference. */
+  private snapshot(): string {
+    const { shapes, ...rest } = this.project;
+    const lean = shapes.map((s) => {
+      if (s.kind !== 'raster') return s;
+      this.blobs.set(s.id, s.data);
+      return { ...s, data: `blob:${s.id}` };
+    });
+    return JSON.stringify({ ...rest, shapes: lean });
+  }
+
+  /** The inverse of `snapshot`, putting the raster pixels back. */
+  private restore(snap: string): Project {
+    const project = JSON.parse(snap) as Project;
+    project.shapes = project.shapes.map((s) =>
+      s.kind === 'raster' && s.data.startsWith('blob:')
+        ? { ...s, data: this.blobs.get(s.data.slice(5)) ?? s.data }
+        : s);
+    return project;
+  }
+
   private commit(key: string): void {
     const now = performance.now();
     if (key === this.lastCommitKey && now - this.lastCommitTime < Store.COALESCE_MS) {
@@ -262,7 +296,7 @@ export class Store {
     }
     this.lastCommitKey = key;
     this.lastCommitTime = now;
-    this.undoStack.push(JSON.stringify(this.project));
+    this.undoStack.push(this.snapshot());
     if (this.undoStack.length > Store.MAX_HISTORY) this.undoStack.shift();
     this.redoStack.length = 0;
   }
@@ -273,8 +307,8 @@ export class Store {
   undo(): void {
     const snap = this.undoStack.pop();
     if (!snap) return;
-    this.redoStack.push(JSON.stringify(this.project));
-    this.project = JSON.parse(snap) as Project;
+    this.redoStack.push(this.snapshot());
+    this.project = this.restore(snap);
     this.lastCommitKey = '';
     this.invalidateAll();
     this.pending.structural = true;
@@ -284,8 +318,8 @@ export class Store {
   redo(): void {
     const snap = this.redoStack.pop();
     if (!snap) return;
-    this.undoStack.push(JSON.stringify(this.project));
-    this.project = JSON.parse(snap) as Project;
+    this.undoStack.push(this.snapshot());
+    this.project = this.restore(snap);
     this.lastCommitKey = '';
     this.invalidateAll();
     this.pending.structural = true;
@@ -296,6 +330,7 @@ export class Store {
   load(project: Project): void {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
+    this.blobs.clear();
     this.project = normaliseProject(project);
     this.pending = emptyChange();
     this.pending.structural = true;

@@ -38,6 +38,13 @@ export type ExportOptions = {
   margin?: number;
   /** Caption printed in the margin. */
   label?: string;
+  /**
+   * Per-point ink indices for spot layers, keyed by layer id, from
+   * `assignPlates`. Supplying it skips the per-dot ink solve — which is the same
+   * answer on every plate — and is what keeps a separation linear in points
+   * rather than in points times plates.
+   */
+  inkIndex?: Map<string, Int16Array>;
 };
 
 export function estimatePoints(engine: Engine, project: Project): number {
@@ -123,6 +130,7 @@ export function exportSVG(engine: Engine, project: Project, opts: ExportOptions 
     const geo = shapeGeometry(def);
     const paintAttr = geo.kind === 'stroke' ? 'stroke' : 'fill';
     const inks = inkSetFor(layer);
+    const preset = opts.inkIndex?.get(layer.id);
 
     const t = layer.transform;
     const cx = width / 2;
@@ -144,7 +152,9 @@ export function exportSVG(engine: Engine, project: Project, opts: ExportOptions 
     const d = points.data;
     for (let i = 0; i < points.count; i++) {
       const o = i * POINT_STRIDE;
-      const p = evaluatePoint(layer, d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], sampleColor, inks);
+      const p = evaluatePoint(
+        layer, d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], sampleColor, inks, preset?.[i],
+      );
       if (p.size <= 0.01 || p.alpha <= 0.001) continue;
       if (route === 'per-point' && p.ink !== plate!.index) continue;
       const deg = (p.rotation * 180) / Math.PI;

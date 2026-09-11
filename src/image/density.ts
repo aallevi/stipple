@@ -84,7 +84,7 @@ export class DensityMap {
       }
     }
 
-    if (f.sharpen > 0) lum = unsharp(lum, width, height, f.sharpen * pixelScale);
+    if (f.sharpen > 0) lum = unsharp(lum, width, height, f.sharpen, pixelScale);
     if (f.invert) for (let i = 0; i < n; i++) lum[i] = 1 - lum[i];
 
     return new DensityMap(width, height, lum, rgba);
@@ -314,8 +314,23 @@ function boxV(src: Float32Array, dst: Float32Array, w: number, h: number, r: num
   }
 }
 
-function unsharp(src: Float32Array, w: number, h: number, amount: number): Float32Array {
-  const blurred = boxBlur(src, w, h, 2);
+/**
+ * Unsharp mask.
+ *
+ * `amount` is strength and stays as the user set it; `pixelScale` widens the
+ * radius instead, because the halo is the spatial part and spatial filters are
+ * specified in canvas pixels. Scaling the strength by it, as this used to,
+ * sharpened a 4000px photo on a 1024px canvas four times as hard as the slider
+ * said while leaving the halo two pixels wide.
+ */
+function unsharp(
+  src: Float32Array,
+  w: number,
+  h: number,
+  amount: number,
+  pixelScale: number,
+): Float32Array {
+  const blurred = boxBlur(src, w, h, 2 * pixelScale);
   const out = new Float32Array(src.length);
   const k = amount * 2;
   for (let i = 0; i < src.length; i++) {

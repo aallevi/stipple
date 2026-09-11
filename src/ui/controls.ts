@@ -59,32 +59,50 @@ export function group(title: string): Control {
 }
 
 /**
- * Hold the engine in preview quality for the whole of a drag.
+ * Drags in flight, and the one window listener that ends them.
  *
- * `pointerup` alone is not enough: a drag that ends outside the window, or a
- * keyboard nudge that never produces a pointer event, would leave the engine
- * pinned to preview quality for the rest of the session.
+ * A drag has to be ended by a `pointerup` anywhere, not just on the control, or
+ * releasing outside the window leaves the engine pinned to preview quality for
+ * the rest of the session. But one window listener *per control* leaks: the
+ * inspector rebuilds its whole panel whenever the layer, unit or resolution
+ * changes, and the listeners of the panel it threw away stay registered. So
+ * there is a single listener here, and controls come and go from this set.
  */
+const activeDrags = new Set<() => void>();
+let windowEndBound = false;
+
+function bindWindowEnd(): void {
+  if (windowEndBound) return;
+  windowEndBound = true;
+  window.addEventListener('pointerup', () => {
+    for (const end of [...activeDrags]) end();
+  });
+}
+
+/** Hold the engine in preview quality for the whole of a drag. */
 function bindDrag(el: HTMLElement, ia: Interaction | undefined): void {
   if (!ia) return;
   let active = false;
-  const begin = (): void => {
-    if (active) return;
-    active = true;
-    ia.begin();
-  };
   const end = (): void => {
     if (!active) return;
     active = false;
+    activeDrags.delete(end);
     ia.end();
   };
+  const begin = (): void => {
+    if (active) return;
+    active = true;
+    activeDrags.add(end);
+    ia.begin();
+  };
   el.addEventListener('pointerdown', begin);
+  // A keyboard nudge never produces a pointer event, so it ends on its own keyup.
   el.addEventListener('keydown', begin);
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
   el.addEventListener('keyup', end);
   el.addEventListener('blur', end);
-  window.addEventListener('pointerup', end);
+  bindWindowEnd();
 }
 
 /** Paints the filled portion of a range track up to its current value. */

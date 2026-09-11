@@ -576,7 +576,7 @@ export class Inspector {
       const set = buildInkSet(c.palette, c.paper ?? null);
       const split = inkShares(src, set, c.mixing, c.matchBy === 'tone');
       const parts = split.map((v, i) => {
-        const name = i >= set.inkCount ? 'paper' : inkName(c.palette[i], i);
+        const name = i >= set.inkCount ? 'paper' : inkName(c.palette[i]);
         return `${name} ${Math.round(v * 100)}%`;
       });
       sharesKey = key;

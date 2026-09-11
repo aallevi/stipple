@@ -2,7 +2,7 @@ import { defaultProject, BUILTIN_SHAPES } from '../core/defaults';
 import { Store } from '../core/store';
 import type { Project } from '../core/types';
 import { exportPDF } from '../export/pdf';
-import { exportPlates } from '../export/plates';
+import { exportPlates, planPlates } from '../export/plates';
 import { exportPNG } from '../export/png';
 import { estimatePoints, exportSVG, WARN_POINTS } from '../export/svg';
 import { decodeImage } from '../image/loader';
@@ -485,21 +485,24 @@ export class App {
     const project = this.store.get();
     try {
       this.engine.prepareForExport();
-      const { files, warnings } = exportPlates(this.engine, project, { baseName: 'stipple' });
-      if (files.length === 0) {
-        this.notify(warnings[0] ?? 'Nothing to separate.', true);
+      // Ask first, then build. The plan knows the screens and their names
+      // without generating a byte of SVG, so cancelling costs nothing.
+      const plan = planPlates(project, 'stipple');
+      if (plan.files.length === 0) {
+        this.notify(plan.warnings[0] ?? 'Nothing to separate.', true);
         return;
       }
 
-      const plates = files.filter((f) => !f.name.endsWith('-proof.svg'));
-      const summary = plates.map((f, i) => `  ${i + 1}. ${f.name}`).join('\n');
+      const summary = plan.files.map((name, i) => `  ${i + 1}. ${name}`).join('\n');
       const ok = confirm(
-        `${plates.length} screen${plates.length === 1 ? '' : 's'} to burn, plus a colour proof:\n\n` +
-        `${summary}\n\n${warnings.length ? `${warnings.join('\n')}\n\n` : ''}` +
+        `${plan.files.length} screen${plan.files.length === 1 ? '' : 's'} to burn, plus a colour proof:\n\n` +
+        `${summary}\n\n${plan.warnings.length ? `${plan.warnings.join('\n')}\n\n` : ''}` +
         `Each film is black on white with registration marks in the margin.\n\nWrite the files?`,
       );
       if (!ok) return;
 
+      const { files, warnings } = exportPlates(this.engine, project, { baseName: 'stipple' });
+      const plates = files.filter((f) => !f.name.endsWith('-proof.svg'));
       const { dir, written, failed } = await saveFiles(files);
       if (dir === null) return;
       if (failed.length) {
@@ -583,6 +586,7 @@ export class App {
    * different rates, and separating them stops a jittering frame time from
    * shifting the point count sideways every frame.
    */
+  private hudKey = '';
   private updateHUD(): void {
     const s = this.engine.stats;
     const avg = this.frameTimes.length
@@ -596,6 +600,15 @@ export class App {
       ['update', `${avg.toFixed(1)} ms`],
       ['zoom', `${Math.round(this.engine.getViewport().zoom * 100)}%`],
     ];
+    // The loop runs every frame and `engine.render()` returns immediately when
+    // nothing is dirty — but rebuilding these nodes anyway meant an idle app
+    // still churned eighteen elements sixty times a second. On an idle frame no
+    // value has moved (the frame-time average only shifts when work was done),
+    // so the comparison holds and the DOM is left alone.
+    const key = chips.map(([, v]) => v).join('|');
+    if (key === this.hudKey) return;
+    this.hudKey = key;
+
     this.hud.replaceChildren(...chips.map(([k, v]) =>
       h('span', { class: 'hud-chip' }, h('span', { class: 'hud-key' }, k), v)));
   }

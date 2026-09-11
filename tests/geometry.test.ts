@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultLayer, BUILTIN_SHAPES } from '../src/core/defaults';
-import { evaluatePoint, shapeGeometry } from '../src/export/geometry';
+import { assignPlates, evaluatePoint, inkSetFor, shapeGeometry } from '../src/export/geometry';
+import { POINT_STRIDE } from '../src/dist/types';
 import { lineSkeleton, SHAPE_R } from '../src/shape/rasterize';
 import type { Layer, ShapeDef } from '../src/core/types';
 
@@ -227,5 +228,85 @@ describe('line shapes fit their cell', () => {
     expect(geo.kind).toBe('stroke');
     if (geo.kind !== 'stroke') return;
     expect(geo.width).toBeCloseTo(lineSkeleton(def).strokeWidth, 9);
+  });
+});
+
+/**
+ * Splitting a stack into films runs the exporter once per screen. `assignPlates`
+ * settles which ink each dot takes once, up front, so the per-dot solve is not
+ * repeated identically on every plate — which means it has to give exactly the
+ * answer the per-dot path gives, or a mark would land on a different screen than
+ * the proof showed.
+ */
+describe('assignPlates', () => {
+  const spotLayer = (patch: Partial<Layer['color']> = {}): Layer => layerWith({
+    color: {
+      ...defaultLayer('t').color,
+      mode: 'spot',
+      palette: [[0.9, 0.1, 0.1, 1], [0.1, 0.2, 0.8, 1], [0.95, 0.9, 0.1, 1]],
+      paper: [1, 1, 1, 1],
+      ...patch,
+    },
+  });
+
+  /** A spread of positions and per-point randoms, as a real buffer would hold. */
+  const points = (n = 400): { data: Float32Array; count: number } => {
+    const data = new Float32Array(n * POINT_STRIDE);
+    for (let i = 0; i < n; i++) {
+      const o = i * POINT_STRIDE;
+      data[o] = (i * 37) % 200;
+      data[o + 1] = (i * 53) % 200;
+      data[o + 2] = (i % 100) / 100;
+      data[o + 3] = 0;
+      data[o + 4] = ((i * 7919) % 1000) / 1000;
+    }
+    return { data, count: n };
+  };
+
+  // A smooth sweep through the gamut, so every ink and the paper get claimed.
+  const sampler = (x: number, y: number): [number, number, number] =>
+    [(x % 200) / 200, (y % 200) / 200, ((x + y) % 200) / 200];
+
+  for (const [name, patch] of [
+    ['scattering', { mixing: 1, matchBy: 'colour' as const }],
+    ['posterising', { mixing: 0, matchBy: 'colour' as const }],
+    ['matching on tone', { mixing: 0.5, matchBy: 'tone' as const }],
+  ] as const) {
+    it(`agrees with the per-dot path when ${name}`, () => {
+      const layer = spotLayer(patch);
+      const inks = inkSetFor(layer);
+      const pts = points();
+      const preset = assignPlates(layer, pts, sampler, inks)!;
+      expect(preset).not.toBeNull();
+
+      for (let i = 0; i < pts.count; i++) {
+        const o = i * POINT_STRIDE;
+        const args = [
+          layer, pts.data[o], pts.data[o + 1], pts.data[o + 2],
+          pts.data[o + 3], pts.data[o + 4], sampler, inks,
+        ] as const;
+        const live = evaluatePoint(...args);
+        const cached = evaluatePoint(...args, preset[i]);
+        expect(cached.ink).toBe(live.ink);
+        expect(cached.alpha).toBe(live.alpha);
+        expect(cached.rgb).toEqual(live.rgb);
+      }
+    });
+  }
+
+  it('claims bare paper as its own index, so those dots stay unprinted', () => {
+    const layer = spotLayer({ mixing: 0 });
+    const inks = inkSetFor(layer)!;
+    // White is the paper, which sits one past the last ink.
+    const pts = { data: new Float32Array([0, 0, 0.5, 0, 0.5]), count: 1 };
+    const preset = assignPlates(layer, pts, () => [1, 1, 1], inks)!;
+
+    expect(preset[0]).toBe(inks.inkCount);
+    expect(evaluatePoint(layer, 0, 0, 0.5, 0, 0.5, () => [1, 1, 1], inks, preset[0]).alpha).toBe(0);
+  });
+
+  it('has nothing to say about a layer that does not print from a palette', () => {
+    const layer = layerWith({});
+    expect(assignPlates(layer, points(4), sampler, inkSetFor(layer))).toBeNull();
   });
 });
