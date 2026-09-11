@@ -62,11 +62,19 @@ export function exportSVG(engine: Engine, project: Project, opts: ExportOptions 
     if (def) shapesUsed.set(def.id, def);
   }
 
+  // Physical units on the root, user units in the viewBox.
+  //
+  // A bare `width="1024"` is 1024 CSS px, which an editor reads as 10.67in — but
+  // a canvas pixel here is 1/dpi of an inch, so the same document is 3.41in at
+  // 300 dpi. Stating the size in inches is what makes the file open at the size
+  // the document panel promised, and keeps a screen ruled at 45 lpi actually 45
+  // lines to the inch.
+  const inches = (px: number): string => (px / Math.max(1, project.canvas.dpi)).toFixed(4);
   const out: string[] = [];
   out.push(`<?xml version="1.0" encoding="UTF-8"?>`);
   out.push(
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
-    `width="${width + 2 * m}" height="${height + 2 * m}" ` +
+    `width="${inches(width + 2 * m)}in" height="${inches(height + 2 * m)}in" ` +
     `viewBox="${-m} ${-m} ${width + 2 * m} ${height + 2 * m}">`,
   );
   // A film positive is read as ink where it is black, so the ground has to be

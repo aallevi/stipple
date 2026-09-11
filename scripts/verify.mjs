@@ -378,6 +378,51 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+// One document, one physical size.
+//
+// The exporters used to disagree with the document panel about what a canvas
+// pixel is worth: the panel and the halftone generator treat it as 1/dpi of an
+// inch, while PDF and PNG assumed the CSS 1/96, making every export 3.125x too
+// big at 300 dpi and turning a 45 lpi separation into a 14 lpi one. Nothing in
+// the types could catch that, so it is checked here against the one number the
+// user is shown.
+// ---------------------------------------------------------------------------
+const sizes = await page.evaluate(async () => {
+  const { store } = window.__stipple;
+  store.updateCanvas({ width: 900, height: 600, dpi: 300 });
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const svg = await window.__stipple.exportSVG();
+  const pdf = await window.__stipple.exportPDF();
+  const png = await window.__stipple.exportPNG(1);
+  // The page object sits after the content stream, so scan the tail, not the
+  // header — on a 100k-point stipple that is megabytes in.
+  const head = new TextDecoder('latin1').decode(pdf.bytes.subarray(Math.max(0, pdf.bytes.length - 8000)));
+  const bmp = await createImageBitmap(png);
+
+  return {
+    dpi: 300,
+    svgW: (svg.match(/width="([\d.]+)in"/) ?? [])[1],
+    svgH: (svg.match(/height="([\d.]+)in"/) ?? [])[1],
+    mediaBox: (head.match(/MediaBox \[([^\]]+)\]/) ?? [])[1],
+    pngW: bmp.width,
+    pngH: bmp.height,
+  };
+});
+
+const wantIn = [900 / 300, 600 / 300];
+const pdfPts = (sizes.mediaBox ?? '').trim().split(/\s+/).map(Number);
+check('SVG opens at the size the document panel promises',
+  Math.abs(Number(sizes.svgW) - wantIn[0]) < 0.01 && Math.abs(Number(sizes.svgH) - wantIn[1]) < 0.01,
+  `${sizes.svgW}×${sizes.svgH} in, want ${wantIn[0]}×${wantIn[1]}`);
+check('PDF page is the same physical size as the SVG',
+  Math.abs(pdfPts[2] / 72 - wantIn[0]) < 0.01 && Math.abs(pdfPts[3] / 72 - wantIn[1]) < 0.01,
+  `${(pdfPts[2] / 72).toFixed(2)}×${(pdfPts[3] / 72).toFixed(2)} in (MediaBox ${sizes.mediaBox})`);
+check('PNG carries one pixel per canvas pixel, so it lands at the document dpi',
+  sizes.pngW === 900 && sizes.pngH === 600,
+  `${sizes.pngW}×${sizes.pngH} px = ${(sizes.pngW / sizes.dpi).toFixed(2)}×${(sizes.pngH / sizes.dpi).toFixed(2)} in at ${sizes.dpi} dpi`);
+
+// ---------------------------------------------------------------------------
 // Spot inks and plate separation.
 //
 // The whole feature is a *classification* — which of N screens each dot is

@@ -401,13 +401,17 @@ export class App {
     try {
       this.engine.prepareForExport();
       if (kind === 'png') {
-        const scale = project.canvas.dpi / 96;
+        // 1:1. A canvas pixel is already 1/dpi of an inch, so the document's own
+        // pixel dimensions *are* its print resolution — scaling by dpi/96 on top
+        // of that, as this used to, made every export 3.125x too big at 300 dpi.
+        const scale = 1;
         this.notify('Rendering PNG…');
         const blob = await exportPNG(this.engine, project, scale, (done, total) =>
           this.notify(`Rendering PNG… tile ${done}/${total}`));
         const bytes = new Uint8Array(await blob.arrayBuffer());
         await saveFile(bytes, 'stipple.png', [{ name: 'PNG', extensions: ['png'] }]);
-        this.notify(`Exported PNG at ${Math.round(project.canvas.width * scale)}×${Math.round(project.canvas.height * scale)}`);
+        const { width: pw, height: ph, dpi } = project.canvas;
+        this.notify(`Exported PNG at ${pw}×${ph} — ${(pw / dpi).toFixed(1)}×${(ph / dpi).toFixed(1)} in at ${dpi} dpi`);
         return;
       }
 

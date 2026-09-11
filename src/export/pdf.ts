@@ -16,7 +16,16 @@ import { evaluatePoint, inkSetFor, shapeGeometry, type ShapeGeometry } from './g
  * to filled circles, and the caller is told.
  */
 
-const PT_PER_PX = 72 / 96;
+/**
+ * Points per canvas pixel.
+ *
+ * A canvas pixel is 1/dpi of an inch — that is what the document panel says and
+ * what the halftone generator assumes when it turns a lineature into a cell
+ * size. This used to be the CSS constant 72/96, which quietly made every PDF
+ * 3.125x too big at the default 300 dpi and turned a 45 lpi separation into a
+ * 14 lpi one. There is only one convention now, and it is this.
+ */
+const ptPerPx = (dpi: number): number => 72 / Math.max(1, dpi);
 
 export type PDFResult = { bytes: Uint8Array; warnings: string[] };
 
@@ -24,6 +33,7 @@ export function exportPDF(engine: Engine, project: Project): PDFResult {
   engine.prepareForExport();
   const warnings: string[] = [];
   const { width, height, background } = project.canvas;
+  const PT_PER_PX = ptPerPx(project.canvas.dpi);
   const pw = width * PT_PER_PX;
   const ph = height * PT_PER_PX;
 

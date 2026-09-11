@@ -227,6 +227,12 @@ every cache and re-runs every distribution, so a drag across the slider would qu
 thousands of full rebuilds. The readout shows what you are about to get, in pixels and
 in inches at the current resolution; Apply commits it.
 
+**One canvas pixel is 1/dpi of an inch**, everywhere — the panel readout, the halftone
+lineature, and all four exporters. A 900 × 600 document at 300 dpi is 3 × 2 inches, and
+that is the size the SVG, the PDF and the plates open at; the PNG comes out 900 × 600,
+one pixel per canvas pixel. Set the resolution you intend to print at and the numbers
+in the panel are the numbers you get.
+
 **Tone mask** — restrict a layer to a slice of the tonal range, with feathered edges.
 Two layers with complementary masks and different shapes is the cheapest route to a
 hand-drawn look: coarse marks in the shadows, fine ones in the light.
@@ -237,7 +243,7 @@ that a layer reading the render below it has continuous tone to work with, and b
 precedes contrast so the contrast pivot can be moved onto whatever part of the range the
 input actually occupies.
 
-Export is PNG (tiled at the document DPI), SVG, PDF, or `Plates` for screenprinting.
+Export is PNG (1:1 at the document resolution), SVG, PDF, or `Plates` for screenprinting.
 Both vector formats emit one definition per shape and one instance per point, so files
 stay proportionate — though past a few hundred thousand points any vector file becomes
 slow to open, and the export dialog will say so. Plate export writes SVG only; open the
