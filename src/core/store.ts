@@ -139,6 +139,15 @@ export class Store {
     this.markLayer(layer.id, Dirty.Density);
   }
 
+  /** Swap the whole stack, for operations that only make sense as a set. */
+  replaceLayers(layers: Layer[]): void {
+    this.commit('replace-layers');
+    this.project.layers = layers;
+    this.pending.structural = true;
+    this.pending.global = worst(this.pending.global, Dirty.All);
+    this.schedule();
+  }
+
   removeLayer(id: string): void {
     const idx = this.project.layers.findIndex((l) => l.id === id);
     if (idx < 0) return;

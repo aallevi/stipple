@@ -5,7 +5,7 @@ import {
   type JitteredParams, type Layer, type VoronoiParams,
 } from '../core/types';
 import {
-  colorControl, h, raw, rangeControl, section, select, slider, toggle,
+  button, colorControl, h, hint, raw, rangeControl, readout, section, select, slider, toggle,
   type Control, type Interaction,
 } from './controls';
 import { shapeParamControls } from './shapeparams';
@@ -50,7 +50,8 @@ export class Inspector {
     // down the slider under the cursor.
     const shape = this.store.get().shapes.find((s) => s.id === layer.shapeId);
     const shapeForm = shape ? `${shape.kind}/${shape.kind === 'line' ? shape.style : ''}` : 'none';
-    const key = [layer.id, layer.distribution.algo, layer.color.mode, layer.shapeId, shapeForm].join(':');
+    const key = [layer.id, layer.distribution.algo, layer.color.mode, layer.shapeId,
+      shapeForm, layer.prefilter.channel ?? 'luma'].join(':');
     if (key !== this.builtFor) {
       this.build(layer);
       this.builtFor = key;
@@ -97,39 +98,54 @@ export class Inspector {
       // it selects, so choosing a shape and tuning it is one movement.
       section('Shape', [
         raw(this.shapeLibrary.el),
-        ...shapeParamControls(s, ia, layer.shapeId),
+        ...shapeParamControls(s, ia, layer.shapeId, () => L().size.max),
       ], false, [this.shapeLibrary.duplicateBtn, this.shapeLibrary.importBtn]),
 
       section('Size', [
         slider({
-          label: 'Size in lights', min: 0, max: 60, step: 0.1, interaction: ia,
-          unit: 'px', reset: size.min,
-          title: 'Dot size at the light end of the tone range',
-          get: () => L().size.min,
-          set: (v) => s.updateLayerField(id, 'size', { min: v }),
-        }),
-        slider({
-          label: 'Size in darks', min: 0, max: 60, step: 0.1, interaction: ia,
+          label: 'Size', min: 0, max: 60, step: 0.1, interaction: ia,
           unit: 'px', reset: size.max,
-          title: 'Dot size at the dark end of the tone range',
+          title: 'The overall mark size — what a dot in the shadows measures across',
           get: () => L().size.max,
-          set: (v) => s.updateLayerField(id, 'size', { max: v }),
+          set: (v) => {
+            // Scale the whole ramp: the spread is what the user set, so moving
+            // the master must not quietly change how much tone matters.
+            const spread = toneSpread(L());
+            s.updateLayerField(id, 'size', { max: v, min: v * (1 - spread), fromTone: 1 });
+          },
         }),
         slider({
-          label: 'Tone influence', min: 0, max: 1, step: 0.01, interaction: ia, reset: size.fromTone,
-          title: '0 holds every dot at "Size in darks"; 1 lets tone drive size fully',
-          get: () => L().size.fromTone,
-          set: (v) => s.updateLayerField(id, 'size', { fromTone: v }),
+          label: 'Tone spread', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+          title: 'How much smaller the quiet end of the range gets. 0 draws every mark at Size',
+          get: () => toneSpread(L()),
+          set: (v) => {
+            const max = L().size.max;
+            s.updateLayerField(id, 'size', { min: max * (1 - v), fromTone: 1 });
+          },
+        }),
+        readout(() => {
+          const l = L();
+          const lo = lightEndSize(l);
+          const [a, b] = l.size.invert ? ['darks', 'lights'] : ['lights', 'darks'];
+          return `${a} ${lo.toFixed(1)} px \u2192 ${b} ${l.size.max.toFixed(1)} px`;
+        }),
+        slider({
+          label: 'Tone response', min: 0.3, max: 2, step: 0.05, interaction: ia, reset: 1,
+          title: '1 makes the mark\u2019s width track tone, which suits a drawing. '
+            + '0.5 makes its area track tone, which is what a halftone needs to print '
+            + 'a 50% grey as 50% grey',
+          get: () => L().size.gamma ?? 1,
+          set: (v) => s.updateLayerField(id, 'size', { gamma: v }),
         }),
         slider({
           label: 'Size jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: size.jitter,
-          title: 'Random size variation per dot',
+          title: 'Random size variation per mark',
           get: () => L().size.jitter,
           set: (v) => s.updateLayerField(id, 'size', { jitter: v }),
         }),
         toggle({
           label: 'Swap light / dark',
-          title: 'Put the big dots in the highlights instead of the shadows',
+          title: 'Put the big marks in the highlights instead of the shadows',
           get: () => L().size.invert,
           set: (v) => s.updateLayerField(id, 'size', { invert: v }),
         }),
@@ -178,6 +194,37 @@ export class Inspector {
           set: (v) => s.updateLayerField(id, 'mask', { invert: v }),
         }),
       ], true),
+
+      section('Ink', [
+        select<'luma' | 'ink'>({
+          label: 'Measures',
+          title: 'Overall tone, or the coverage of one ink — the basis of a separation',
+          options: [
+            { value: 'luma', label: 'Overall tone' },
+            { value: 'ink', label: 'One ink (separation)' },
+          ],
+          get: () => L().prefilter.channel ?? 'luma',
+          set: (v) => s.updateLayerField(id, 'prefilter', { channel: v }),
+        }),
+        ...(layer.prefilter.channel === 'ink' ? [
+          colorControl({
+            label: 'Ink', interaction: ia,
+            get: () => L().prefilter.ink ?? [0, 0, 0, 1],
+            set: (v) => s.updateLayerField(id, 'prefilter', { ink: v }),
+          }),
+          slider({
+            label: 'Undercolour', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+            title: 'How much of the neutral component to leave to a black plate. '
+              + '1 keeps total ink coverage printable; 0 is a naive separation',
+            get: () => L().prefilter.undercolor ?? 0,
+            set: (v) => s.updateLayerField(id, 'prefilter', { undercolor: v }),
+          }),
+          raw(button('Match the dot colour to this ink', () => {
+            const c = L().prefilter.ink ?? [0, 0, 0, 1];
+            s.updateLayerField(id, 'color', { mode: 'solid', color: c });
+          }, 'sm wide')),
+        ] : [hint('This layer reads overall tone. Switch to an ink to make it one plate of a separation.')]),
+      ], layer.prefilter.channel !== 'ink'),
 
       section('Image adjust', [
         slider({
@@ -471,4 +518,24 @@ export class Inspector {
 
 function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * The size the quiet end of the tone range actually renders at.
+ *
+ * `size.min` is not that number on its own: the shader blends the tone-driven
+ * size against a flat `size.max` by `fromTone`, so a layer can reach the same
+ * visible ramp through several different triples. Collapsing them here is what
+ * lets one "Tone spread" slider stand in for two that were never independent.
+ */
+function lightEndSize(layer: Layer): number {
+  const s = layer.size;
+  return s.max + (s.min - s.max) * s.fromTone;
+}
+
+/** That ramp as a fraction, which is what the slider edits. */
+function toneSpread(layer: Layer): number {
+  const max = layer.size.max;
+  if (max <= 0) return 0;
+  return Math.min(1, Math.max(0, 1 - lightEndSize(layer) / max));
 }

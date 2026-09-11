@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { defaultLayer, BUILTIN_SHAPES } from '../src/core/defaults';
 import { evaluatePoint, shapeGeometry } from '../src/export/geometry';
-import type { Layer } from '../src/core/types';
+import { lineSkeleton, SHAPE_R } from '../src/shape/rasterize';
+import type { Layer, ShapeDef } from '../src/core/types';
 
 /**
  * `evaluatePoint` is the CPU mirror of the point vertex shader; if the two drift,
@@ -160,5 +161,71 @@ describe('path simplification', () => {
     const line: [number, number][] = [];
     for (let i = 0; i <= 50; i++) line.push([i / 50, i / 50]);
     expect(simplify(line, 0.001)).toEqual([[0, 0], [1, 1]]);
+  });
+});
+
+describe('line shapes fit their cell', () => {
+  const lineDef = (over: Partial<Extract<ShapeDef, { kind: 'line' }>> = {}) => ({
+    kind: 'line' as const, id: 'l', name: 'L',
+    style: 'radial' as const, length: 1, segments: 6, thickness: 0.2, warp: 0, seed: 1,
+    ...over,
+  });
+
+  /**
+   * How far the ink reaches along each axis, caps included.
+   *
+   * The constraint is per-axis, not radial: the atlas tile is a square and the
+   * stamp rotates rigidly with it, so a mark may legitimately fill the cell
+   * corner to corner. Anything past `SHAPE_R` on either axis is simply gone —
+   * the tile has no margin to spill into.
+   */
+  function halfExtent(def: Extract<ShapeDef, { kind: 'line' }>): { x: number; y: number } {
+    const { runs, strokeWidth } = lineSkeleton(def);
+    let x = 0;
+    let y = 0;
+    for (const run of runs) {
+      for (const [px, py] of run) {
+        x = Math.max(x, Math.abs(px));
+        y = Math.max(y, Math.abs(py));
+      }
+    }
+    return { x: x + strokeWidth / 2, y: y + strokeWidth / 2 };
+  }
+
+  it('never reaches past the padded cell, at any parameter combination', () => {
+    for (const style of ['radial', 'linear', 'rounded'] as const) {
+      for (const length of [0.05, 0.5, 1]) {
+        for (const thickness of [0.01, 0.5, 1]) {
+          for (const warp of [0, 1]) {
+            const def = lineDef({ style, length, thickness, warp, segments: 8 });
+            const e = halfExtent(def);
+            // 1e-9 absorbs float error; the point is that nothing is clipped.
+            expect(e.x).toBeLessThanOrEqual(SHAPE_R + 1e-9);
+            expect(e.y).toBeLessThanOrEqual(SHAPE_R + 1e-9);
+          }
+        }
+      }
+    }
+  });
+
+  it('makes the mark exactly as long as length asks, whatever the thickness', () => {
+    for (const thickness of [0.02, 0.25, 0.6]) {
+      const def = lineDef({ length: 0.8, thickness });
+      expect(halfExtent(def).x).toBeCloseTo(SHAPE_R * 0.8, 9);
+    }
+  });
+
+  it('degenerates to a dot of the full extent at maximum thickness', () => {
+    const { runs, strokeWidth } = lineSkeleton(lineDef({ thickness: 1, length: 0.6 }));
+    for (const run of runs) for (const [x, y] of run) expect(Math.hypot(x, y)).toBeCloseTo(0, 9);
+    expect(strokeWidth).toBeCloseTo(2 * SHAPE_R * 0.6, 9);
+  });
+
+  it('gives the exporter the same geometry the rasteriser strokes', () => {
+    const def = lineDef({ style: 'rounded', warp: 0.7, segments: 5 });
+    const geo = shapeGeometry(def);
+    expect(geo.kind).toBe('stroke');
+    if (geo.kind !== 'stroke') return;
+    expect(geo.width).toBeCloseTo(lineSkeleton(def).strokeWidth, 9);
   });
 });

@@ -30,6 +30,7 @@ uniform vec4 uAtlasUV;     // xy = tile origin, zw = tile extent
 uniform float uSizeMin;
 uniform float uSizeMax;
 uniform float uSizeFromTone;
+uniform float uSizeGamma;
 uniform bool  uSizeInvert;
 uniform float uSizeJitter;
 
@@ -64,7 +65,9 @@ void main() {
   // property keys off.
   float ink = uSizeInvert ? aTone : 1.0 - aTone;
 
-  float toned = mix(uSizeMin, uSizeMax, ink);
+  // Area-true halftones need the diameter to follow sqrt(ink); see SizeParams.
+  float t = uSizeGamma == 1.0 ? ink : pow(max(ink, 0.0), uSizeGamma);
+  float toned = mix(uSizeMin, uSizeMax, t);
   float size = mix(uSizeMax, toned, uSizeFromTone);
   float jr = fract(aRand * 7919.13);
   size *= 1.0 + (jr - 0.5) * 2.0 * uSizeJitter;
@@ -241,6 +244,7 @@ export class PointRenderer {
     gl.uniform1f(u.uSizeMin!, s.min * opts.sizeScale);
     gl.uniform1f(u.uSizeMax!, s.max * opts.sizeScale);
     gl.uniform1f(u.uSizeFromTone!, s.fromTone);
+    gl.uniform1f(u.uSizeGamma!, s.gamma ?? 1);
     gl.uniform1i(u.uSizeInvert!, s.invert ? 1 : 0);
     gl.uniform1f(u.uSizeJitter!, s.jitter);
 

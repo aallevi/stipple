@@ -9,7 +9,7 @@ import { testCard } from '../image/testcard';
 import { Engine } from '../pipeline/engine';
 import { decodeNative, openFile, saveFile, supportedImageExtensions } from '../platform';
 import { rasterBitmap } from '../shape/import';
-import { button, colorControl, h, section, slider, type Control, type Interaction } from './controls';
+import { button, colorControl, h, readout, section, slider, type Control, type Interaction } from './controls';
 import { Inspector } from './inspector';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
@@ -152,30 +152,7 @@ export class App {
       presetSel.value = '';
     });
 
-    const canvasControls = [
-      slider({
-        label: 'Width', min: 128, max: 8000, step: 1, unit: 'px',
-        get: () => this.store.get().canvas.width,
-        set: (v) => this.store.updateCanvas({ width: Math.round(v) }),
-      }),
-      slider({
-        label: 'Height', min: 128, max: 8000, step: 1, unit: 'px',
-        get: () => this.store.get().canvas.height,
-        set: (v) => this.store.updateCanvas({ height: Math.round(v) }),
-      }),
-      slider({
-        label: 'Resolution', min: 36, max: 1200, step: 1, unit: 'dpi',
-        title: 'Used by the PNG and PDF exporters, and by the halftone lineature',
-        get: () => this.store.get().canvas.dpi,
-        set: (v) => this.store.updateCanvas({ dpi: Math.round(v) }),
-      }),
-      colorControl({
-        label: 'Background', interaction: this.interaction,
-        get: () => this.store.get().canvas.background,
-        set: (v) => this.store.updateCanvas({ background: v }),
-      }),
-    ];
-    this.document = section('Document', canvasControls, true);
+    this.document = this.documentSection();
     this.document.sync();
 
     // The toolbar reads left to right as the workflow does — bring an image in,
@@ -220,6 +197,97 @@ export class App {
         ),
       ),
     );
+  }
+
+  /**
+   * Canvas size, resolution and background.
+   *
+   * Width and height are staged rather than applied live. Resizing the document
+   * invalidates every cache in the engine and re-runs every distribution, so a
+   * drag across this slider would queue thousands of full rebuilds and the app
+   * would appear to hang — and each intermediate value is one you never wanted
+   * anyway. The controls show what you are about to get; Apply commits it.
+   */
+  private documentSection(): Control {
+    const store = this.store;
+    const project = store.get();
+    const pending = { width: project.canvas.width, height: project.canvas.height };
+
+    const apply = button('Apply', () => {
+      this.store.updateCanvas({ width: Math.round(pending.width), height: Math.round(pending.height) });
+      this.fitToWindow();
+      this.notify(`Canvas set to ${Math.round(pending.width)}×${Math.round(pending.height)}`);
+      refresh();
+    }, 'sm primary', 'Resize the document to the staged width and height');
+
+    const dirty = (): boolean => {
+      const c = this.store.get().canvas;
+      return Math.round(pending.width) !== c.width || Math.round(pending.height) !== c.height;
+    };
+    let refresh = (): void => {};
+
+    const stage = (patch: Partial<typeof pending>): void => {
+      Object.assign(pending, patch);
+      refresh();
+    };
+
+    const controls: Control[] = [
+      slider({
+        label: 'Width', min: 128, max: 8000, step: 1, unit: 'px',
+        get: () => pending.width,
+        set: (v) => stage({ width: v }),
+      }),
+      slider({
+        label: 'Height', min: 128, max: 8000, step: 1, unit: 'px',
+        get: () => pending.height,
+        set: (v) => stage({ height: v }),
+      }),
+      readout(() => {
+        const c = this.store.get().canvas;
+        const w = Math.round(pending.width);
+        const h = Math.round(pending.height);
+        const inches = `${(w / c.dpi).toFixed(1)} × ${(h / c.dpi).toFixed(1)} in at ${c.dpi} dpi`;
+        return dirty() ? `${w} × ${h} px · ${inches} — not applied yet` : `${w} × ${h} px · ${inches}`;
+      }),
+      // DPI is safe to apply live: it rescales the export and the halftone cell,
+      // but it never resizes a buffer.
+      slider({
+        label: 'Resolution', min: 36, max: 1200, step: 1, unit: 'dpi', interaction: this.interaction,
+        title: 'Used by the PNG and PDF exporters, and by the halftone lineature',
+        get: () => this.store.get().canvas.dpi,
+        set: (v) => this.store.updateCanvas({ dpi: Math.round(v) }),
+      }),
+      colorControl({
+        label: 'Background', interaction: this.interaction,
+        get: () => this.store.get().canvas.background,
+        set: (v) => this.store.updateCanvas({ background: v }),
+      }),
+    ];
+
+    const sec = section('Document', controls, true, [apply]);
+    refresh = (): void => {
+      apply.disabled = !dirty();
+      apply.classList.toggle('pending', dirty());
+      for (const c of controls) c.sync();
+    };
+
+    // An undo, a preset or an opened image resizes the document without going
+    // through these controls. Re-stage from the project when that happens, or
+    // Apply would sit lit up offering to undo a change the user never made.
+    let seen = `${project.canvas.width}x${project.canvas.height}`;
+    return {
+      el: sec.el,
+      sync() {
+        const c = store.get().canvas;
+        const now = `${c.width}x${c.height}`;
+        if (now !== seen) {
+          seen = now;
+          pending.width = c.width;
+          pending.height = c.height;
+        }
+        refresh();
+      },
+    };
   }
 
   // -- viewport ------------------------------------------------------------

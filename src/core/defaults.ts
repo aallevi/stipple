@@ -15,14 +15,20 @@ export const BUILTIN_SHAPES: ShapeDef[] = [
   { kind: 'polygon', id: 'square', name: 'Square', vertices: 4, warp: 0, innerRadius: 1, seed: 1 },
   { kind: 'polygon', id: 'hexagon', name: 'Hexagon', vertices: 6, warp: 0, innerRadius: 1, seed: 1 },
   { kind: 'polygon', id: 'star', name: 'Star', vertices: 5, warp: 0, innerRadius: 0.45, seed: 1 },
-  { kind: 'line', id: 'dash', name: 'Dash', style: 'linear', length: 0.9, segments: 1, thickness: 0.22, warp: 0, seed: 1 },
-  { kind: 'line', id: 'cross', name: 'Cross', style: 'radial', length: 0.9, segments: 2, thickness: 0.18, warp: 0, seed: 1 },
-  { kind: 'line', id: 'burst', name: 'Burst', style: 'radial', length: 0.95, segments: 6, thickness: 0.12, warp: 0, seed: 1 },
-  { kind: 'line', id: 'squiggle', name: 'Squiggle', style: 'rounded', length: 0.9, segments: 4, thickness: 0.2, warp: 0.55, seed: 7 },
+  // `thickness` is a fraction of the mark's own extent, so these read as line
+  // weights: a dash is about a seventh as thick as it is long, a burst arm a
+  // thirteenth. See `lineSkeleton` for why that is the useful way round.
+  { kind: 'line', id: 'dash', name: 'Dash', style: 'linear', length: 0.9, segments: 1, thickness: 0.15, warp: 0, seed: 1 },
+  { kind: 'line', id: 'cross', name: 'Cross', style: 'radial', length: 0.9, segments: 2, thickness: 0.12, warp: 0, seed: 1 },
+  { kind: 'line', id: 'burst', name: 'Burst', style: 'radial', length: 0.95, segments: 6, thickness: 0.075, warp: 0, seed: 1 },
+  { kind: 'line', id: 'squiggle', name: 'Squiggle', style: 'rounded', length: 0.9, segments: 4, thickness: 0.13, warp: 0.55, seed: 7 },
 ];
 
 export function defaultPrefilter(): Prefilter {
-  return { brightness: 0, contrast: 0, gamma: 1, blur: 0, sharpen: 0, invert: false };
+  return {
+    brightness: 0, contrast: 0, gamma: 1, blur: 0, sharpen: 0, invert: false,
+    channel: 'luma', ink: [0, 0, 0, 1], undercolor: 1,
+  };
 }
 
 export function defaultMask(): LayerMask {
@@ -30,7 +36,7 @@ export function defaultMask(): LayerMask {
 }
 
 export function defaultSize(): SizeParams {
-  return { min: 0.6, max: 4, fromTone: 1, invert: false, jitter: 0 };
+  return { min: 0.6, max: 4, fromTone: 1, gamma: 1, invert: false, jitter: 0 };
 }
 
 export function defaultRotation(): RotationParams {

@@ -44,8 +44,10 @@ export type ShapeDef =
       id: string;
       name: string;
       style: 'linear' | 'radial' | 'rounded';
-      length: number;     // 0..1 relative to the shape cell
+      /** The mark's whole extent, caps included, as a fraction of the cell. */
+      length: number;     // 0..1
       segments: number;   // 1..24
+      /** Stroke width as a fraction of that extent, so it reads as line weight. */
       thickness: number;  // 0..1
       warp: number;
       seed: number;
@@ -133,6 +135,23 @@ export type Prefilter = {
   blur: number;       // px
   sharpen: number;    // 0..1
   invert: boolean;
+  /**
+   * What this layer measures. `luma` is overall tone — the default, and what a
+   * single-colour stipple wants. `ink` measures how much of one specific ink the
+   * image asks for at each pixel, which is what turns a stack of layers into a
+   * set of printable separations.
+   *
+   * Absent in projects saved before separations existed; treated as `luma`.
+   */
+  channel?: 'luma' | 'ink';
+  /** For `ink`: the ink being separated, as it prints. */
+  ink?: RGBA;
+  /**
+   * For `ink`: how much of the neutral component to leave to a black plate.
+   * 1 is full grey-component replacement — the chromatic inks carry only colour,
+   * which is what keeps total ink coverage printable. 0 is a naive separation.
+   */
+  undercolor?: number;
 };
 
 export type LayerMask = {
@@ -148,6 +167,13 @@ export type SizeParams = {
   max: number;          // px, at the dark end of the tone range
   /** 0 = every point is `max`, 1 = size fully tracks tone. */
   fromTone: number;
+  /**
+   * Exponent on the tone-to-size ramp. 1 makes *diameter* track tone, which is
+   * what a drawing wants; 0.5 makes *area* track it, which is what a halftone
+   * needs — ink coverage goes as the square of the dot, so a linear ramp prints
+   * a 50% grey at about 68%. Absent in older projects; treated as 1.
+   */
+  gamma?: number;
   /** Flip which end of the tone range gets the big points. */
   invert: boolean;
   /** Random size variation, 0..1. */

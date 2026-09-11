@@ -38,6 +38,21 @@ export function hint(text: string): Control {
   return raw(h('p', { class: 'hint' }, text));
 }
 
+/**
+ * A line of derived text, recomputed on every `sync`.
+ *
+ * Most sliders in this app are fractions of something else, and a bare "0.15"
+ * does not say what it is a fraction of. Pairing the relative control with the
+ * absolute value it resolves to is what makes the two legible together.
+ */
+export function readout(get: () => string): Control {
+  const value = h('span', {});
+  return {
+    el: h('div', { class: 'ctl-readout' }, value),
+    sync() { value.textContent = get(); },
+  };
+}
+
 /** A labelled divider inside a section, for grouping related controls. */
 export function group(title: string): Control {
   return raw(h('div', { class: 'ctl-group' }, title));

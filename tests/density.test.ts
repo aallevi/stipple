@@ -114,3 +114,60 @@ describe('DensityMap prefilter', () => {
     expect(Math.abs(total[15] - 16 * 16 * 0.5)).toBeLessThan(1);
   });
 });
+
+describe('ink separation', () => {
+  function solid(r: number, g: number, b: number): ImageSource {
+    const rgba = new Uint8ClampedArray(4 * 4 * 4);
+    for (let i = 0; i < 16; i++) {
+      rgba[i * 4] = Math.round(r * 255);
+      rgba[i * 4 + 1] = Math.round(g * 255);
+      rgba[i * 4 + 2] = Math.round(b * 255);
+      rgba[i * 4 + 3] = 255;
+    }
+    return { width: 4, height: 4, rgba };
+  }
+
+  const base: Prefilter = {
+    brightness: 0, contrast: 0, gamma: 1, blur: 0, sharpen: 0, invert: false,
+  };
+  const inked = (ink: [number, number, number, number], undercolor = 0): Prefilter =>
+    ({ ...base, channel: 'ink', ink, undercolor });
+
+  /** The map stores tone, and coverage is its complement. */
+  const coverage = (src: ImageSource, f: Prefilter): number =>
+    1 - DensityMap.fromSource(src, f).sample(2, 2);
+
+  const CYAN: [number, number, number, number] = [0, 0.67, 0.93, 1];
+  const BLACK: [number, number, number, number] = [0.08, 0.08, 0.08, 1];
+
+  it('asks for no cyan on red, and a full plate on cyan', () => {
+    expect(coverage(solid(1, 0.05, 0.05), inked(CYAN))).toBeLessThan(0.1);
+    expect(coverage(solid(0, 0.67, 0.93), inked(CYAN))).toBeGreaterThan(0.9);
+  });
+
+  it('keeps a saturated colour off the black plate', () => {
+    // Projecting absorption onto the ink reads a pure red as most of a black
+    // plate, which is what turns a four-colour print into mud.
+    expect(coverage(solid(0.88, 0.12, 0.12), inked(BLACK))).toBeLessThan(0.25);
+  });
+
+  it('puts a neutral grey on the black plate at roughly its darkness', () => {
+    expect(coverage(solid(0.5, 0.5, 0.5), inked(BLACK))).toBeCloseTo(0.54, 1);
+  });
+
+  it('hands the neutrals to black when undercolour is on', () => {
+    const grey = solid(0.5, 0.5, 0.5);
+    expect(coverage(grey, inked(CYAN, 0))).toBeGreaterThan(0.4);
+    expect(coverage(grey, inked(CYAN, 1))).toBeLessThan(0.05);
+  });
+
+  it('leaves a white ink carrying nothing, rather than dividing by zero', () => {
+    const c = coverage(solid(0.2, 0.2, 0.2), inked([1, 1, 1, 1]));
+    expect(Number.isFinite(c)).toBe(true);
+    expect(c).toBe(0);
+  });
+
+  it('reads overall tone when no channel is set, as older projects have', () => {
+    expect(DensityMap.fromSource(solid(0.5, 0.5, 0.5), base).sample(2, 2)).toBeCloseTo(0.5, 1);
+  });
+});

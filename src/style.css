@@ -131,6 +131,16 @@ body {
 }
 .btn.primary:hover { background: #3a80d4; border-color: #4f8fdd; }
 .btn.sm { padding: 2px 8px; font-size: 11px; }
+.btn.wide { width: 100%; }
+/* A staged resize that has not been committed yet. */
+.btn.pending { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(94, 168, 255, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(94, 168, 255, 0.22); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.pending { animation: none; box-shadow: 0 0 0 2px rgba(94, 168, 255, 0.3); }
+}
 .btn.icon {
   padding: 0;
   width: 22px;
@@ -256,6 +266,9 @@ select {
 
 /* -- layers -------------------------------------------------------------- */
 
+.separate-row { padding: 7px 10px 0; }
+.separate-select { width: 100%; }
+
 .layer-list {
   padding: 5px;
   border-bottom: 1px solid var(--line);
@@ -344,6 +357,14 @@ select {
 
 .section-body { padding: 10px; }
 .section-body > * + * { margin-top: 7px; }
+
+.ctl-readout {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  padding: 3px 0 1px var(--label-w);
+  margin-left: var(--gap);
+}
 
 .ctl-group {
   color: var(--text-faint);

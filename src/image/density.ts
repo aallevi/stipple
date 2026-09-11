@@ -44,13 +44,18 @@ export class DensityMap {
     const n = width * height;
     let lum: Float32Array = new Float32Array(n);
 
-    // Rec. 709 luma, then gamma.
+    // Rec. 709 luma, then gamma — or, for a separation, this layer's ink.
     const invGamma = 1 / Math.max(0.01, f.gamma);
+    const ink = f.channel === 'ink' ? inkProjector(f) : null;
     for (let i = 0; i < n; i++) {
       const r = rgba[i * 4] / 255;
       const g = rgba[i * 4 + 1] / 255;
       const b = rgba[i * 4 + 2] / 255;
-      let v = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      // `lum` is tone, where 0 is dark and gets the most ink. A separation
+      // measures coverage, which runs the other way, so it is inverted here and
+      // every downstream rule — tone range, size ramp, masks — keeps working
+      // without knowing which kind of layer it is looking at.
+      let v = ink ? 1 - ink(r, g, b) : 0.2126 * r + 0.7152 * g + 0.0722 * b;
       if (f.gamma !== 1) v = Math.pow(v, invGamma);
       lum[i] = v < 0 ? 0 : v > 1 ? 1 : v;
     }
@@ -202,6 +207,51 @@ export class DensityMap {
     }
     return { rows, total };
   }
+}
+
+/**
+ * How much of one ink a pixel asks for, in 0..1.
+ *
+ * Ink is subtractive, so work in absorption: `a = 1 - pixel` is what the pixel
+ * takes out of white, `b = 1 - ink` is what one unit of this ink takes out. The
+ * answer is the most of this ink that overshoots no channel —
+ * `min(a_c / b_c)` over the channels this ink actually touches.
+ *
+ * The tempting alternative, projecting a onto b, is wrong in exactly the case
+ * that matters: it reads a saturated red as 68% black, because it measures total
+ * absorption rather than the part this one ink can account for. Every plate then
+ * fires everywhere and the print comes out mud.
+ *
+ * Channels the ink cannot affect (b ~ 0, as green and blue are for cyan) impose
+ * no limit — another plate covers those.
+ *
+ * `undercolor` then removes the neutral part of the answer, because a grey is
+ * cheaper and cleaner to print with one black plate than by stacking three
+ * chromatic inks on top of each other.
+ */
+function inkProjector(f: Prefilter): (r: number, g: number, b: number) => number {
+  const ink = f.ink ?? [0, 0, 0, 1];
+  const b0 = 1 - ink[0];
+  const b1 = 1 - ink[1];
+  const b2 = 1 - ink[2];
+  const peak = Math.max(b0, b1, b2);
+  // A pure white ink absorbs nothing and can carry no image.
+  if (peak < 1e-6) return () => 0;
+  const gcr = f.undercolor ?? 0;
+
+  return (r, g, b) => {
+    const a0 = 1 - r;
+    const a1 = 1 - g;
+    const a2 = 1 - b;
+    let t = Infinity;
+    if (b0 > 1e-6) t = Math.min(t, a0 / b0);
+    if (b1 > 1e-6) t = Math.min(t, a1 / b1);
+    if (b2 > 1e-6) t = Math.min(t, a2 / b2);
+    // The neutral component, expressed as a quantity of *this* ink.
+    const grey = Math.min(a0, a1, a2) / peak;
+    const v = t - gcr * grey;
+    return v < 0 ? 0 : v > 1 ? 1 : v;
+  };
 }
 
 function bilinear(data: Float32Array, w: number, h: number, x: number, y: number): number {

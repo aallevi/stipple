@@ -94,6 +94,52 @@ the desktop shell.
 Open an image (the app starts on a synthetic test card so there is always something on
 screen), pick a preset to see the shape of things, then work down the sidebar.
 
+### How the controls relate
+
+Everything on the right-hand side is one chain. Knowing where a control sits in it
+is usually enough to predict what it will do.
+
+```
+ SOURCE ──► Image adjust ──► Ink ──────► tone 0..1 ──┬──► Tone mask ──► keep / drop
+            gamma, blur,     luma, or                │
+            brightness,      coverage of             └──► Distribution ──► where the
+            contrast,        one ink                      spacing / lineature / count
+            sharpen, invert                                        │
+                                                                   ▼
+                                            POINT (x, y, tone, gradient, random)
+                                                                   │
+   ink = tone, flipped by "Swap light / dark"                      │
+        │                                                          ▼
+        ├─► Size      = Size × lerp(1 − Tone spread, 1, ink ^ Tone response)
+        │                     × (1 ± Size jitter)          ── in canvas px
+        ├─► Rotation  = Angle + random·Randomness + contour·Follow contours
+        └─► Colour    = mode(tone, random) × (1 ± Colour jitter)
+                                                                   │
+                                                                   ▼
+                                                    ┌──── the stamp ────┐
+   circle / polygon     across = Size × 0.84                   ← 0.84 leaves the
+   line family          across = Size × 0.84 × Length            distance field
+                        stroke = across × Thickness              room to fall off
+                                                                   │
+                                            Transform (scale, rotate, offset, flip)
+                                                                   ▼
+                                            Blend mode + Layer opacity ──► the layer below
+```
+
+Two rules fall out of that, and they are the ones worth remembering:
+
+**Shape parameters are fractions; `Size` is the only absolute.** `Length` is a
+fraction of the mark's cell and `Thickness` is a fraction of the mark's own length,
+so both are scale-free — a line keeps its proportions when you resize the layer, and
+thickening one grows it inward instead of pushing it out of its cell. The panel shows
+the pixels each fraction resolves to, so you never have to do that arithmetic.
+
+**Size is a ramp, not a number.** `Size` sets the dark end; `Tone spread` says how
+much smaller the light end gets; `Tone response` is the curve between them. Leave the
+response at 1 for drawing — mark width tracks tone. Set it to 0.5 for anything meant
+to print: ink coverage goes as the square of the dot, so a linear ramp lays a 50%
+grey down at about 68%.
+
 **Distribution** — how points are placed.
 
 | Algorithm | Character | Good for |
@@ -109,14 +155,32 @@ gives you `Sides`, `Inner radius` and `Irregularity`. Those edits belong to the 
 and they are shared by every layer pointing at that shape — `Duplicate` forks it first if
 you want a six-armed burst and a sixteen-armed one in the same stack.
 
-**Size** — `Size in lights` and `Size in darks` are the two ends of the ramp, and
-`Tone influence` blends between a constant size and one fully driven by tone.
+**Size** — `Size` is the overall scale, `Tone spread` how much smaller the quiet end
+of the range gets, `Tone response` the curve between them (0.5 for print, 1 for
+drawing). The readout resolves the pair into pixels.
 
 **Rotation** — a fixed `Angle`, per-mark `Randomness`, and `Follow contours`, which
 aligns each mark to the image's contours and is what makes line shapes flow around forms.
 
+**Ink** — what the layer measures. `Overall tone` is the default. `One ink` measures
+how much of a single ink the image asks for at each pixel, which is what makes a layer
+one plate of a separation; `Undercolour` decides how much of the neutral component it
+leaves to a black plate.
+
 **Colour** — solid, adaptive (hue ramps with tone), sampled from the image, or a random
-palette pick per point.
+palette pick per point. This is the ink the layer *prints with*, which is separate from
+the ink it *measures* — the Ink section has a button to match one to the other.
+
+**Separations** — the menu at the top of the layer stack replaces the stack with one
+plate per ink: CMYK, CMY, RGB, duotone or tritone, screened or stippled. The plates
+multiply, carry the classic 30°-apart screen angles, and only the black plate carries
+the neutrals, so total ink coverage stays printable. Each plate is an ordinary layer
+afterwards — change its ink, its screen, or its shape like any other.
+
+**Document** — width and height are staged, not applied live: resizing invalidates
+every cache and re-runs every distribution, so a drag across the slider would queue
+thousands of full rebuilds. The readout shows what you are about to get, in pixels and
+in inches at the current resolution; Apply commits it.
 
 **Tone mask** — restrict a layer to a slice of the tonal range, with feathered edges.
 Two layers with complementary masks and different shapes is the cheapest route to a

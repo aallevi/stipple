@@ -1,6 +1,7 @@
 import type { Store } from '../core/store';
 import type { ShapeDef } from '../core/types';
-import { hint, select, slider, type Control, type Interaction } from './controls';
+import { SHAPE_PAD } from '../shape/rasterize';
+import { hint, readout, select, slider, type Control, type Interaction } from './controls';
 
 /**
  * Geometry controls for whichever shape the selected layer is stamping.
@@ -14,22 +15,48 @@ export function shapeParamControls(
   store: Store,
   ia: Interaction,
   shapeId: string,
+  /** The layer's dark-end size in px, for resolving the fractions below. */
+  sizePx: () => number,
 ): Control[] {
   const def = store.get().shapes.find((s) => s.id === shapeId);
   if (!def) return [hint('This layer points at a shape that is no longer in the library.')];
 
+  // Every shape is drawn to the same radius inside its cell, so this one line
+  // converts any of the fractions below into the pixels they actually produce.
+  const across = (): number => sizePx() * (1 - SHAPE_PAD);
+
   switch (def.kind) {
     case 'line':
-      return lineControls(store, ia, def);
+      return [
+        ...lineControls(store, ia, def),
+        readout(() => {
+          const d = store.get().shapes.find((x) => x.id === shapeId) as LineDef | undefined;
+          if (!d) return '';
+          const extent = across() * d.length;
+          return `${fmt(extent)} px long · ${fmt(extent * d.thickness)} px thick, in the darks`;
+        }),
+      ];
     case 'polygon':
-      return polygonControls(store, ia, def);
+      return [
+        ...polygonControls(store, ia, def),
+        readout(() => `${fmt(across())} px across, in the darks`),
+      ];
     case 'circle':
-      return [hint('A circle has no geometry to tune. Duplicate a line or polygon shape, or import your own.')];
+      return [
+        hint('A circle has no geometry to tune. Duplicate a line or polygon shape, or import your own.'),
+        readout(() => `${fmt(across())} px across, in the darks`),
+      ];
     case 'svg':
-      return [hint(`Vector artwork imported from a file — ${def.paths.length} path${def.paths.length === 1 ? '' : 's'}, drawn as-is.`)];
+      return [hint(`Vector artwork imported from a file — ${def.paths.length} path${def.paths.length === 1 ? '' : 's'}, drawn as-is.`),
+        readout(() => `${fmt(across())} px across, in the darks`)];
     case 'raster':
-      return [hint(`Bitmap stamp imported from a file — ${def.width}×${def.height}, masked by its alpha channel.`)];
+      return [hint(`Bitmap stamp imported from a file — ${def.width}×${def.height}, masked by its alpha channel.`),
+        readout(() => `${fmt(across())} px across, in the darks`)];
   }
+}
+
+function fmt(px: number): string {
+  return px < 10 ? px.toFixed(2) : px.toFixed(1);
 }
 
 type LineDef = Extract<ShapeDef, { kind: 'line' }>;
@@ -70,15 +97,15 @@ function lineControls(store: Store, ia: Interaction, initial: LineDef): Control[
       label: 'Length',
       min: 0.05, max: 1, step: 0.01, interaction: ia,
       reset: 0.9,
-      title: 'How far the line reaches across its cell, before the layer size is applied',
+      title: 'The mark\u2019s whole extent, caps included, as a fraction of the layer size',
       get: () => d().length,
       set: (v) => set({ length: v }),
     }),
     slider({
       label: 'Thickness',
-      min: 0.02, max: 1, step: 0.01, interaction: ia,
-      reset: 0.2,
-      title: 'Stroke width as a fraction of the cell',
+      min: 0.01, max: 1, step: 0.01, interaction: ia,
+      reset: 0.15,
+      title: 'Stroke width as a fraction of the mark\u2019s own length, so it reads as line weight at any size',
       get: () => d().thickness,
       set: (v) => set({ thickness: v }),
     }),

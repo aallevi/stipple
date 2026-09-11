@@ -204,7 +204,12 @@ export class Engine {
   }
 
   private pointsKeyFor(layer: Layer, canvasW: number, canvasH: number, quality: number): string {
-    return `${canvasW}x${canvasH}|${quality}|${JSON.stringify(layer.distribution)}|${JSON.stringify(layer.mask)}`;
+    // A halftone screen sizes its cell from the document DPI, so DPI is one of
+    // its inputs and belongs in its key. No other algorithm reads it, and making
+    // them all miss on a DPI change would regenerate millions of points for a
+    // number none of them use.
+    const dpi = layer.distribution.algo === 'halftone' ? this.store.get().canvas.dpi : 0;
+    return `${canvasW}x${canvasH}|${dpi}|${quality}|${JSON.stringify(layer.distribution)}|${JSON.stringify(layer.mask)}`;
   }
 
   // -- rendering -----------------------------------------------------------

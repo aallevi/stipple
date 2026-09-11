@@ -2,6 +2,7 @@ import { defaultLayer, uid } from '../core/defaults';
 import type { Store } from '../core/store';
 import type { Layer } from '../core/types';
 import { button, h } from './controls';
+import { buildSeparation, SEPARATIONS } from './separations';
 
 /**
  * The layer stack.
@@ -20,13 +21,44 @@ export class LayersPanel {
       h('div', { class: 'panel-head' },
         h('span', {}, 'Layers'),
         h('div', { class: 'panel-actions' },
-          button('+', () => this.add(), 'icon'),
-          button('⧉', () => this.duplicate(), 'icon'),
-          button('−', () => this.remove(), 'icon'),
+          button('+', () => this.add(), 'icon', 'Add a layer'),
+          button('⧉', () => this.duplicate(), 'icon', 'Duplicate the selected layer'),
+          button('−', () => this.remove(), 'icon', 'Delete the selected layer'),
         ),
       ),
+      this.separateMenu(),
       this.list,
     );
+  }
+
+  /**
+   * Replace the stack with one layer per ink.
+   *
+   * This is a whole-stack operation rather than a per-layer setting because a
+   * separation only means anything as a set: the plates have to agree on their
+   * screen angles and on which one carries the neutrals, and choosing that ink
+   * by ink is how you end up with a moiré.
+   */
+  private separateMenu(): HTMLElement {
+    const sel = h('select', { class: 'separate-select' }) as HTMLSelectElement;
+    sel.append(h('option', { value: '' }, 'Separate into inks…'));
+    for (const [key, kind] of Object.entries(SEPARATIONS)) {
+      sel.append(h('option', { value: key }, kind.label));
+    }
+    sel.addEventListener('change', () => {
+      const kind = SEPARATIONS[sel.value];
+      sel.value = '';
+      if (!kind) return;
+      const project = this.store.get();
+      if (project.layers.length > 1 || project.layers[0]?.prefilter.channel === 'ink') {
+        if (!confirm(`Replace the current ${project.layers.length}-layer stack with ` +
+          `${kind.inks.length} ink plates?`)) return;
+      }
+      this.store.replaceLayers(buildSeparation(kind, project.canvas));
+      this.render();
+      this.select(this.store.get().layers[this.store.get().layers.length - 1].id);
+    });
+    return h('div', { class: 'separate-row' }, sel);
   }
 
   add(): void {

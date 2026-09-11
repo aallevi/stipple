@@ -1,6 +1,6 @@
 import type { ColorParams, Layer, RGBA, ShapeDef } from '../core/types';
 import { mulberry32 } from '../core/rng';
-import { SHAPE_PAD } from '../shape/rasterize';
+import { lineSkeleton, SHAPE_PAD, SHAPE_R } from '../shape/rasterize';
 
 /**
  * The CPU mirror of the point vertex shader.
@@ -32,7 +32,8 @@ export function evaluatePoint(
 ): EvaluatedPoint {
   const s = layer.size;
   const ink = s.invert ? tone : 1 - tone;
-  const toned = s.min + (s.max - s.min) * ink;
+  const t = (s.gamma ?? 1) === 1 ? ink : Math.pow(Math.max(0, ink), s.gamma ?? 1);
+  const toned = s.min + (s.max - s.min) * t;
   let size = s.max + (toned - s.max) * s.fromTone;
   const jr = fract(rand * 7919.13);
   size *= 1 + (jr - 0.5) * 2 * s.jitter;
@@ -108,7 +109,7 @@ export type ShapeGeometry =
  * to SVG or PDF is genuinely resolution-independent — not a traced bitmap.
  */
 export function shapeGeometry(def: ShapeDef): ShapeGeometry {
-  const R = 0.5 * (1 - SHAPE_PAD);
+  const R = SHAPE_R;
   switch (def.kind) {
     case 'circle':
       return { kind: 'circle', r: R };
@@ -128,23 +129,13 @@ export function shapeGeometry(def: ShapeDef): ShapeGeometry {
     }
 
     case 'line': {
-      const rng = mulberry32(def.seed);
-      const len = R * def.length;
+      // Same skeleton the rasteriser strokes, so the vector mark and the
+      // preview mark are the same mark rather than two readings of one spec.
+      const { runs, strokeWidth, smooth } = lineSkeleton(def);
       let d = '';
-      if (def.style === 'radial') {
-        for (let i = 0; i < def.segments * 2; i++) {
-          const a = (i / (def.segments * 2)) * Math.PI * 2;
-          const l = len * (1 - def.warp * rng());
-          d += `M0,0L${n(Math.cos(a) * l)},${n(Math.sin(a) * l)}`;
-        }
-      } else {
-        const pts: [number, number][] = [];
-        for (let i = 0; i <= def.segments; i++) {
-          const t = i / def.segments;
-          pts.push([(t - 0.5) * 2 * len, (rng() - 0.5) * 2 * len * def.warp]);
-        }
-        d = `M${n(pts[0][0])},${n(pts[0][1])}`;
-        if (def.style === 'rounded' && pts.length > 2) {
+      for (const pts of runs) {
+        d += `M${n(pts[0][0])},${n(pts[0][1])}`;
+        if (smooth && pts.length > 2) {
           for (let i = 1; i < pts.length - 1; i++) {
             const [x0, y0] = pts[i];
             const [x1, y1] = pts[i + 1];
@@ -156,7 +147,7 @@ export function shapeGeometry(def: ShapeDef): ShapeGeometry {
           for (let i = 1; i < pts.length; i++) d += `L${n(pts[i][0])},${n(pts[i][1])}`;
         }
       }
-      return { kind: 'stroke', d, width: def.thickness * 0.5 };
+      return { kind: 'stroke', d, width: strokeWidth };
     }
 
     case 'svg': {
