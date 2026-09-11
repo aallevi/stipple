@@ -377,6 +377,80 @@ check(
   `${perf.regenerations} regenerations, ${perf.generationMs.toFixed(2)}ms generation`,
 );
 
+// ---------------------------------------------------------------------------
+// Spot inks and plate separation.
+//
+// The whole feature is a *classification* — which of N screens each dot is
+// printed from — so the things worth checking are that nothing lands between
+// two inks, that the plates partition the dots exactly, and that a film is
+// black on white. A wrong shade would be a disappointment; a dot on the wrong
+// plate is a ruined screen.
+// ---------------------------------------------------------------------------
+const PALETTE = [[0.9, 0.12, 0.15, 1], [0.05, 0.45, 0.75, 1], [0.97, 0.8, 0.1, 1]];
+
+const setSpot = (mixing) => page.evaluate(({ PALETTE, mixing }) => {
+  const { store } = window.__stipple;
+  const id = store.get().layers[0].id;
+  store.updateLayerField(id, 'color', { mode: 'spot', palette: PALETTE, paper: [1, 1, 1, 1], mixing });
+  store.updateLayerField(id, 'prefilter', { channel: 'flat' });
+  store.updateLayerField(id, 'size', { fromTone: 0, max: 3 });
+}, { PALETTE, mixing });
+
+await setSpot(1);
+await page.waitForTimeout(1200);
+check('spot inks compile and render', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+const assigned = await page.evaluate(({ PALETTE }) => {
+  const { engine, store } = window.__stipple;
+  const layer = store.get().layers[0];
+  return import('/src/export/geometry.ts').then(({ evaluatePoint, inkSetFor }) => {
+    const inks = inkSetFor(layer);
+    const pts = engine.pointsFor(layer.id);
+    let off = 0, printed = 0, dropped = 0;
+    for (let i = 0; i < pts.count; i++) {
+      const o = i * 5;
+      const e = evaluatePoint(layer, pts.data[o], pts.data[o + 1], pts.data[o + 2], pts.data[o + 3],
+        pts.data[o + 4], (x, y) => engine.sampleSourceColor(x, y), inks);
+      if (e.alpha <= 0.001) { dropped += 1; continue; }
+      printed += 1;
+      if (!PALETTE.some((c) => Math.abs(c[0] - e.rgb[0]) < 1e-6 && Math.abs(c[1] - e.rgb[1]) < 1e-6)) off += 1;
+    }
+    return { off, printed, dropped };
+  });
+}, { PALETTE });
+check('every printed dot is exactly one ink', assigned.off === 0,
+  `${assigned.printed.toLocaleString()} printed, ${assigned.off} off-palette`);
+check('paper leaves highlights unprinted', assigned.dropped > 0,
+  `${assigned.dropped.toLocaleString()} of ${(assigned.dropped + assigned.printed).toLocaleString()} dots left as stock`);
+
+const plates = await page.evaluate(async () => {
+  const r = await window.__stipple.exportPlates();
+  return {
+    names: r.files.map((f) => f.name),
+    uses: r.files.map((f) => (f.data.match(/<use /g) ?? []).length),
+    fills: r.files.map((f) => [...new Set(f.data.match(/fill="#[0-9a-f]{6}"/g) ?? [])]),
+    marks: r.files.map((f) => (f.data.match(/<circle cx="/g) ?? []).length),
+    viewBox: r.files.map((f) => (f.data.match(/viewBox="[^"]+"/) ?? [''])[0]),
+  };
+});
+check('one film per ink, plus a colour proof', plates.names.length === 4, plates.names.join(', '));
+check('films are named after their ink',
+  plates.names.slice(0, 3).join(',') === 'verify-1-red.svg,verify-2-blue.svg,verify-3-yellow.svg',
+  plates.names.slice(0, 3).join(', '));
+const plateTotal = plates.uses.slice(0, 3).reduce((a, b) => a + b, 0);
+check('the plates partition the dots — none lost, none printed twice',
+  plateTotal === plates.uses[3],
+  `${plates.uses.slice(0, 3).join(' + ')} = ${plateTotal} vs proof ${plates.uses[3]}`);
+check('every film is black on white',
+  plates.fills.slice(0, 3).every((f) => f.every((x) => x === 'fill="#000000"' || x === 'fill="#ffffff"')),
+  plates.fills.slice(0, 3).map((f) => f.join(' ')).join(' | '));
+check('the proof is in the inks themselves',
+  plates.fills[3].some((f) => f !== 'fill="#000000"' && f !== 'fill="#ffffff"'),
+  plates.fills[3].slice(0, 4).join(' '));
+check('registration marks, identically placed on every film',
+  plates.marks.every((m) => m >= 4) && new Set(plates.viewBox).size === 1,
+  `${plates.marks.join(', ')} marks · ${plates.viewBox[0]}`);
+
 await page.screenshot({ path: `${OUT}/app.png`, fullPage: false });
 await browser.close();
 

@@ -1,4 +1,5 @@
 import type { ColorParams, Layer, RGBA, ShapeDef } from '../core/types';
+import { assignInk, buildInkSet, type InkSet } from '../core/color';
 import { mulberry32 } from '../core/rng';
 import { lineSkeleton, SHAPE_PAD, SHAPE_R } from '../shape/rasterize';
 
@@ -19,7 +20,21 @@ export type EvaluatedPoint = {
   rotation: number;
   rgb: [number, number, number];
   alpha: number;
+  /**
+   * Which plate this mark belongs to, for `spot` layers — an index into the
+   * layer's palette. `-1` on every other mode, where the mark is not tied to a
+   * single screen. Paper comes back as `-1` with `alpha` zeroed, so the
+   * ordinary exporters skip it without knowing spot mode exists.
+   */
+  ink: number;
 };
+
+/** The layer's inks, converted once. Pass it per layer, never per point. */
+export function inkSetFor(layer: Layer): InkSet | null {
+  const c = layer.color;
+  if (c.mode !== 'spot' || c.palette.length === 0) return null;
+  return buildInkSet(c.palette, c.paper ?? null);
+}
 
 export function evaluatePoint(
   layer: Layer,
@@ -29,6 +44,7 @@ export function evaluatePoint(
   grad: number,
   rand: number,
   sampleImage?: (x: number, y: number) => [number, number, number],
+  inks?: InkSet | null,
 ): EvaluatedPoint {
   const s = layer.size;
   const ink = s.invert ? tone : 1 - tone;
@@ -45,10 +61,20 @@ export function evaluatePoint(
     rand * Math.PI * 2 * r.random +
     (grad + Math.PI / 2) * r.followGradient;
 
+  let plate = -1;
+  let alpha = layer.color.alpha * layer.color.color[3];
+  if (layer.color.mode === 'spot' && inks && sampleImage) {
+    const [sr, sg, sb] = sampleImage(x, y);
+    const idx = assignInk(inks, sr, sg, sb, layer.color.mixing, rand);
+    if (idx >= inks.inkCount) alpha = 0; // bare paper: nothing is printed here
+    else plate = idx;
+  }
+
   return {
     x, y, size, rotation,
-    rgb: evaluateColor(layer.color, tone, rand, x, y, sampleImage),
-    alpha: layer.color.alpha * layer.color.color[3],
+    rgb: evaluateColor(layer.color, tone, rand, x, y, sampleImage, plate),
+    alpha,
+    ink: plate,
   };
 }
 
@@ -59,9 +85,13 @@ function evaluateColor(
   x: number,
   y: number,
   sampleImage?: (x: number, y: number) => [number, number, number],
+  ink = -1,
 ): [number, number, number] {
   let rgb: [number, number, number];
-  if (c.mode === 'adaptive') {
+  if (c.mode === 'spot') {
+    const p = c.palette[ink] ?? c.paper ?? [1, 1, 1, 1];
+    rgb = [p[0], p[1], p[2]];
+  } else if (c.mode === 'adaptive') {
     rgb = hsl2rgb(fract((c.hueA + (c.hueB - c.hueA) * tone) / 360), c.saturation, c.lightness);
   } else if (c.mode === 'image' && sampleImage) {
     rgb = sampleImage(x, y);
@@ -72,6 +102,9 @@ function evaluateColor(
   } else {
     rgb = [c.color[0], c.color[1], c.color[2]];
   }
+  // Spot mode opts out, exactly as the shader does: a dot nudged off its ink
+  // would be printed from a screen whose colour the proof never showed.
+  if (c.mode === 'spot') return rgb;
   const wobble = 1 + (fract(rand * 5099.7) - 0.5) * 2 * c.jitter;
   return [clamp01(rgb[0] * wobble), clamp01(rgb[1] * wobble), clamp01(rgb[2] * wobble)];
 }

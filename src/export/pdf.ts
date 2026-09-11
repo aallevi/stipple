@@ -1,7 +1,7 @@
 import type { Project } from '../core/types';
 import { POINT_STRIDE } from '../dist/types';
 import type { Engine } from '../pipeline/engine';
-import { evaluatePoint, shapeGeometry, type ShapeGeometry } from './geometry';
+import { evaluatePoint, inkSetFor, shapeGeometry, type ShapeGeometry } from './geometry';
 
 /**
  * Vector PDF export, written directly.
@@ -65,6 +65,7 @@ export function exportPDF(engine: Engine, project: Project): PDFResult {
       forms.set(def.id, { name, content: formContent(geo) });
     }
     const form = forms.get(def.id)!;
+    const inks = inkSetFor(layer);
 
     content.push('q');
     if (layer.opacity < 1) content.push(`/GS${gsIndex(layer.opacity)} gs`);
@@ -73,7 +74,7 @@ export function exportPDF(engine: Engine, project: Project): PDFResult {
     let lastColor = '';
     for (let i = 0; i < points.count; i++) {
       const o = i * POINT_STRIDE;
-      const p = evaluatePoint(layer, d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], sampleColor);
+      const p = evaluatePoint(layer, d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], sampleColor, inks);
       if (p.size <= 0.01 || p.alpha <= 0.001) continue;
 
       // Only emit a colour operator when it actually changes — for a solid-colour

@@ -124,3 +124,82 @@ export async function saveFile(
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
   return true;
 }
+
+/**
+ * Write several files at once.
+ *
+ * A separation is N plates plus a proof, and putting the native save dialog in
+ * front of each one would make exporting a four-colour job seven interactions.
+ * So the desktop path asks for a folder once and writes into it; the browser,
+ * which has no folder to hand out, falls back to N downloads.
+ */
+export type MultiSave = {
+  /** Null when the user cancelled, which is not the same as writing nothing. */
+  dir: string | null;
+  written: string[];
+  failed: { name: string; error: string }[];
+};
+
+export async function saveFiles(files: { name: string; data: Uint8Array | string }[]): Promise<MultiSave> {
+  const empty: MultiSave = { dir: null, written: [], failed: [] };
+  if (!files.length) return { ...empty, dir: '' };
+
+  if (isTauri()) {
+    const d = await dialog();
+    const dir = (await d.open({ directory: true, multiple: false, title: 'Choose a folder for the plates' })) as
+      | string
+      | null;
+    if (!dir) return empty;
+
+    const f = await fs();
+    const out: MultiSave = { dir, written: [], failed: [] };
+    const sep = dir.endsWith('/') ? '' : '/';
+    for (const file of files) {
+      // Ink names reach here from a colour the user chose, and the app holds a
+      // filesystem scope of `**`. A name is a name, never a path.
+      const name = safeName(file.name);
+      try {
+        const path = `${dir}${sep}${name}`;
+        if (typeof file.data === 'string') await f.writeTextFile(path, file.data);
+        else await f.writeFile(path, file.data);
+        out.written.push(name);
+      } catch (err) {
+        // Keep going: a partial set with a list of what failed is far more
+        // useful than stopping at the first one and saying nothing about the rest.
+        out.failed.push({ name, error: (err as Error).message });
+      }
+    }
+    return out;
+  }
+
+  // Browsers rate-limit a burst of downloads, so space them out rather than
+  // firing every anchor in the same tick and having the tab drop most of them.
+  const out: MultiSave = { dir: '', written: [], failed: [] };
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const name = safeName(file.name);
+    const blob = typeof file.data === 'string'
+      ? new Blob([file.data], { type: mimeFor(name) })
+      : new Blob([file.data.slice().buffer as ArrayBuffer], { type: mimeFor(name) });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    out.written.push(name);
+    if (i < files.length - 1) await new Promise((r) => setTimeout(r, 250));
+  }
+  return out;
+}
+
+function safeName(name: string): string {
+  return name.replace(/[^\w.-]+/g, '_').replace(/^\.+/, '_') || 'untitled';
+}
+
+function mimeFor(name: string): string {
+  if (name.endsWith('.svg')) return 'image/svg+xml';
+  if (name.endsWith('.pdf')) return 'application/pdf';
+  if (name.endsWith('.png')) return 'image/png';
+  return 'application/octet-stream';
+}

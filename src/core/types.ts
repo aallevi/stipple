@@ -141,9 +141,15 @@ export type Prefilter = {
    * image asks for at each pixel, which is what turns a stack of layers into a
    * set of printable separations.
    *
+   * `flat` measures nothing: every pixel reads as fully inked, so the dots land
+   * at even density across the whole canvas. That is what a spot-ink layer
+   * wants, because there lightness is carried by *which* ink each dot takes —
+   * paper included. Leave the density tracking tone as well and the image is
+   * darkened twice over, once by having fewer dots and again by their colour.
+   *
    * Absent in projects saved before separations existed; treated as `luma`.
    */
-  channel?: 'luma' | 'ink';
+  channel?: 'luma' | 'ink' | 'flat';
   /** For `ink`: the ink being separated, as it prints. */
   ink?: RGBA;
   /**
@@ -189,7 +195,7 @@ export type RotationParams = {
 };
 
 export type ColorParams = {
-  mode: 'solid' | 'adaptive' | 'image' | 'multicolor';
+  mode: 'solid' | 'adaptive' | 'image' | 'multicolor' | 'spot';
   /** `solid` */
   color: RGBA;
   /** `adaptive`: hue ramp driven by tone. */
@@ -197,8 +203,23 @@ export type ColorParams = {
   hueB: number;
   saturation: number;
   lightness: number;
-  /** `multicolor`: random pick from this set. */
+  /** `multicolor`: random pick from this set. `spot`: the inks to print with. */
   palette: RGBA[];
+  /**
+   * `spot`: bare stock. Matched against like an ink, but never drawn — dots
+   * that land on it leave paper showing, which is how a three-ink poster gets
+   * its highlights without a fourth screen. `null` prints every dot.
+   */
+  paper: RGBA | null;
+  /**
+   * `spot`: how far a dot may stray from its nearest ink, 0..1.
+   *
+   * 0 posterises — every dot takes the closest ink, so areas come out flat and
+   * unmixed. 1 dithers between the two inks that best reconstruct the colour,
+   * so the eye mixes them; with process inks that is a scatter separation.
+   * In between is a partly mixed print.
+   */
+  mixing: number;
   /** Random per-point value/alpha wobble, applies to every mode. */
   jitter: number;
   alpha: number;

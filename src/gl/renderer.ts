@@ -1,3 +1,4 @@
+import { buildInkSet } from '../core/color';
 import type { ColorParams, Layer } from '../core/types';
 import { POINT_STRIDE } from '../dist/types';
 import { SDF_SPREAD, TILE, type AtlasSlot } from '../shape/atlas';
@@ -13,6 +14,8 @@ import { createProgram, type GL, type Program } from './context';
  */
 
 const MAX_PALETTE = 8;
+/** Inks plus bare paper, which is matched like an ink but never drawn. */
+const MAX_SPOT = MAX_PALETTE + 1;
 
 const POINT_VS = `#version 300 es
 precision highp float;
@@ -50,6 +53,14 @@ uniform float uColorJitter;
 uniform float uAlpha;
 uniform sampler2D uImage;
 
+// Spot inks, pre-converted on the CPU so the shader only has to transform the
+// one pixel it sampled. See src/core/color.ts — this is its mirror.
+uniform vec3  uSpotLab[${MAX_SPOT}];
+uniform vec3  uSpotLin[${MAX_SPOT}];
+uniform int   uSpotInks;
+uniform int   uSpotCount;
+uniform float uSpotMixing;
+
 out vec2 vUV;
 out vec4 vColor;
 out float vSize;
@@ -58,6 +69,78 @@ vec3 hsl2rgb(float h, float s, float l) {
   vec3 k = mod(vec3(0.0, 8.0, 4.0) + h * 12.0, 12.0);
   float a = s * min(l, 1.0 - l);
   return l - a * clamp(min(k - 3.0, 9.0 - k), -1.0, 1.0);
+}
+
+/*
+ * The dither's per-dot draw.
+ *
+ * A bit mix rather than fract(rand * someBigPrime): the fract trick loses
+ * resolution at highp and the CPU computes it in double, so preview and plate
+ * would disagree about a thin band of dots. Integer mixing is identical on
+ * both sides, which matters here because the result is a hard classification
+ * and not a shade.
+ */
+float spotHash(float r) {
+  uint h = floatBitsToUint(r) ^ 0x9E3779B9u;
+  h ^= h >> 16; h *= 0x7FEB352Du;
+  h ^= h >> 15; h *= 0x846CA68Bu;
+  h ^= h >> 16;
+  return float(h >> 8) * (1.0 / 16777216.0);
+}
+
+vec3 srgbToLinear3(vec3 c) {
+  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+vec3 toOklab(vec3 lin) {
+  // max() before the cube root: pow() of a negative is undefined, and a colour
+  // just outside the gamut would poison the whole comparison with NaN.
+  float l = pow(max(dot(lin, vec3(0.4122214708, 0.5363325363, 0.0514459929)), 0.0), 1.0 / 3.0);
+  float m = pow(max(dot(lin, vec3(0.2119034982, 0.6806995451, 0.1073969566)), 0.0), 1.0 / 3.0);
+  float s = pow(max(dot(lin, vec3(0.0883024619, 0.2817188376, 0.6299787005)), 0.0), 1.0 / 3.0);
+  return vec3(
+    0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s);
+}
+
+/*
+ * Which ink this dot prints with. Oklab picks the nearest; linear light decides
+ * how far a second ink would carry it, because dots side by side average in
+ * light. uSpotMixing scales that second ink's share, so 0 posterises and 1
+ * scatters. Keep in step with assignInk in src/core/color.ts.
+ */
+int spotInk(vec3 rgb, float rnd) {
+  vec3 lin = srgbToLinear3(rgb);
+  vec3 lab = toOklab(lin);
+
+  int a = 0;
+  float best = 1e9;
+  for (int i = 0; i < ${MAX_SPOT}; i++) {
+    if (i >= uSpotCount) break;
+    vec3 d = lab - uSpotLab[i];
+    float dd = dot(d, d);
+    if (dd < best) { best = dd; a = i; }
+  }
+  if (uSpotCount == 1 || uSpotMixing <= 0.0) return a;
+
+  vec3 base = uSpotLin[a];
+  vec3 v = lin - base;
+  float bestRes = dot(v, v);
+  int partner = a;
+  float t = 0.0;
+  for (int i = 0; i < ${MAX_SPOT}; i++) {
+    if (i >= uSpotCount) break;
+    if (i == a) continue;
+    vec3 e = uSpotLin[i] - base;
+    float ee = dot(e, e);
+    if (ee < 1e-8) continue;
+    float u = clamp(dot(v, e) / ee, 0.0, 1.0);
+    vec3 r = v - e * u;
+    float res = dot(r, r);
+    if (res < bestRes - 1e-9) { bestRes = res; partner = i; t = u; }
+  }
+  return spotHash(rnd) < t * uSpotMixing ? partner : a;
 }
 
 void main() {
@@ -93,6 +176,7 @@ void main() {
   vUV = uAtlasUV.xy + (aCorner + 0.5) * uAtlasUV.zw;
 
   vec3 rgb;
+  bool drop = false;
   if (uColorMode == 1) {
     float h = mix(uHueA, uHueB, aTone) / 360.0;
     rgb = hsl2rgb(fract(h), uSaturation, uLightness);
@@ -102,13 +186,27 @@ void main() {
     int idx = int(aRand * float(uPaletteCount));
     idx = clamp(idx, 0, uPaletteCount - 1);
     rgb = uPalette[idx].rgb;
+  } else if (uColorMode == 4 && uSpotCount > 0) {
+    int ink = spotInk(texture(uImage, aPos / uCanvas).rgb, aRand);
+    // Past the last ink is bare paper: the dot is not printed at all, which is
+    // how the highlights of a three-ink poster stay unscreened.
+    drop = ink >= uSpotInks;
+    rgb = drop ? vec3(1.0) : uPalette[ink].rgb;
   } else {
     rgb = uColor.rgb;
   }
 
-  float wobble = 1.0 + (fract(aRand * 5099.7) - 0.5) * 2.0 * uColorJitter;
-  rgb = clamp(rgb * wobble, 0.0, 1.0);
+  // Spot mode opts out of the wobble: a dot that drifts off its ink would be
+  // printed from a screen whose colour the proof never showed.
+  if (uColorMode != 4) {
+    float wobble = 1.0 + (fract(aRand * 5099.7) - 0.5) * 2.0 * uColorJitter;
+    rgb = clamp(rgb * wobble, 0.0, 1.0);
+  }
   vColor = vec4(rgb, uAlpha * uColor.a);
+
+  // Collapse the whole quad outside clip space rather than drawing it invisible,
+  // so a dropped dot costs no fragments.
+  if (drop) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }
 `;
 
@@ -271,7 +369,11 @@ export class PointRenderer {
   private setColor(c: ColorParams, opacity: number): void {
     const { gl } = this;
     const u = this.prog.uniforms;
-    const mode = c.mode === 'solid' ? 0 : c.mode === 'adaptive' ? 1 : c.mode === 'image' ? 2 : 3;
+    const mode = c.mode === 'solid' ? 0
+      : c.mode === 'adaptive' ? 1
+      : c.mode === 'image' ? 2
+      : c.mode === 'spot' ? 4
+      : 3;
     gl.uniform1i(u.uColorMode!, mode);
     gl.uniform4f(u.uColor!, c.color[0], c.color[1], c.color[2], c.color[3]);
     gl.uniform1f(u.uHueA!, c.hueA);
@@ -286,6 +388,22 @@ export class PointRenderer {
     for (let i = 0; i < n; i++) flat.set(c.palette[i], i * 4);
     gl.uniform4fv(u.uPalette!, flat);
     gl.uniform1i(u.uPaletteCount!, n);
+
+    if (c.mode === 'spot') {
+      // Converting the palette here rather than in the shader is the whole
+      // reason spot mode stays as cheap as any other: per instance the GPU does
+      // one sRGB-to-Oklab transform, not one per candidate ink.
+      const set = buildInkSet(c.palette, c.paper ?? null, MAX_PALETTE);
+      const lab = new Float32Array(MAX_SPOT * 3);
+      const lin = new Float32Array(MAX_SPOT * 3);
+      lab.set(set.lab);
+      lin.set(set.lin);
+      gl.uniform3fv(u.uSpotLab!, lab);
+      gl.uniform3fv(u.uSpotLin!, lin);
+      gl.uniform1i(u.uSpotInks!, set.inkCount);
+      gl.uniform1i(u.uSpotCount!, set.count);
+      gl.uniform1f(u.uSpotMixing!, c.mixing);
+    }
   }
 
   dispose(): void {

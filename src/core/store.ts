@@ -1,5 +1,5 @@
 import type { Layer, Project, ShapeDef } from './types';
-import { defaultProject } from './defaults';
+import { defaultProject, normaliseProject } from './defaults';
 
 /**
  * How much work a change forces the engine to redo. Higher subsumes lower.
@@ -296,7 +296,7 @@ export class Store {
   load(project: Project): void {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
-    this.project = project;
+    this.project = normaliseProject(project);
     this.pending = emptyChange();
     this.pending.structural = true;
     this.pending.shapes = true;

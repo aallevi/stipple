@@ -1,3 +1,4 @@
+import { extractPalette } from '../core/color';
 import { defaultDistribution, defaultRotation, defaultSize } from '../core/defaults';
 import type { Store } from '../core/store';
 import {
@@ -5,9 +6,10 @@ import {
   type JitteredParams, type Layer, type VoronoiParams,
 } from '../core/types';
 import {
-  button, colorControl, h, hint, raw, rangeControl, readout, section, select, slider, toggle,
-  type Control, type Interaction,
+  button, colorControl, h, hint, paletteControl, raw, rangeControl, readout, section, select,
+  slider, toggle, type Control, type Interaction,
 } from './controls';
+import { INK_SETS } from './separations';
 import { shapeParamControls } from './shapeparams';
 
 /**
@@ -33,6 +35,8 @@ export class Inspector {
     /** The shape library, hosted inside the Shape section it drives. */
     private shapeLibrary: { el: HTMLElement; importBtn: HTMLElement; duplicateBtn: HTMLElement },
     private voronoiAvailable: boolean,
+    /** The photograph, for proposing a palette from what is actually in it. */
+    private getSource: () => { width: number; height: number; rgba: Uint8ClampedArray } | null = () => null,
   ) {}
 
   /** Rebuild if the layer identity or an option that changes the form did. */
@@ -50,8 +54,12 @@ export class Inspector {
     // down the slider under the cursor.
     const shape = this.store.get().shapes.find((s) => s.id === layer.shapeId);
     const shapeForm = shape ? `${shape.kind}/${shape.kind === 'line' ? shape.style : ''}` : 'none';
+    // The ink count and whether paper is in play both change which controls
+    // exist, so they belong in the key alongside the mode.
     const key = [layer.id, layer.distribution.algo, layer.color.mode, layer.shapeId,
-      shapeForm, layer.prefilter.channel ?? 'luma'].join(':');
+      shapeForm, layer.prefilter.channel ?? 'luma',
+      layer.color.palette.length, layer.color.paper ? 'paper' : 'no-paper',
+      layer.color.mode === 'spot' && !evenCoverage(layer) ? 'uneven' : 'even'].join(':');
     if (key !== this.builtFor) {
       this.build(layer);
       this.builtFor = key;
@@ -196,12 +204,13 @@ export class Inspector {
       ], true),
 
       section('Ink', [
-        select<'luma' | 'ink'>({
+        select<'luma' | 'ink' | 'flat'>({
           label: 'Measures',
-          title: 'Overall tone, or the coverage of one ink — the basis of a separation',
+          title: 'Overall tone, the coverage of one ink, or nothing at all',
           options: [
             { value: 'luma', label: 'Overall tone' },
             { value: 'ink', label: 'One ink (separation)' },
+            { value: 'flat', label: 'Nothing (even dots)' },
           ],
           get: () => L().prefilter.channel ?? 'luma',
           set: (v) => s.updateLayerField(id, 'prefilter', { channel: v }),
@@ -223,6 +232,9 @@ export class Inspector {
             const c = L().prefilter.ink ?? [0, 0, 0, 1];
             s.updateLayerField(id, 'color', { mode: 'solid', color: c });
           }, 'sm wide')),
+        ] : layer.prefilter.channel === 'flat' ? [
+          hint('Dots land evenly everywhere. Lightness comes from the ink each one takes, '
+            + 'which is what a spot-ink layer wants.'),
         ] : [hint('This layer reads overall tone. Switch to an ink to make it one plate of a separation.')]),
       ], layer.prefilter.channel !== 'ink'),
 
@@ -438,13 +450,14 @@ export class Inspector {
     const mode = L().color.mode;
 
     const controls: Control[] = [
-      select<'solid' | 'adaptive' | 'image' | 'multicolor'>({
+      select<'solid' | 'adaptive' | 'image' | 'multicolor' | 'spot'>({
         label: 'Colour mode',
         options: [
           { value: 'solid', label: 'Solid' },
           { value: 'adaptive', label: 'Ramp (hue from tone)' },
           { value: 'image', label: 'Sample the image' },
           { value: 'multicolor', label: 'Random from palette' },
+          { value: 'spot', label: 'Spot inks (printable)' },
         ],
         get: () => L().color.mode,
         set: (v) => s.updateLayerField(id, 'color', { mode: v }),
@@ -484,6 +497,8 @@ export class Inspector {
       );
     }
 
+    if (mode === 'spot') controls.push(...this.spotControls(id));
+
     if (mode === 'multicolor') {
       for (let i = 0; i < 3; i++) {
         controls.push(colorControl({
@@ -505,15 +520,139 @@ export class Inspector {
         get: () => L().color.alpha,
         set: (v) => s.updateLayerField(id, 'color', { alpha: v }),
       }),
-      slider({
+    );
+    // Spot mode ignores the wobble on purpose — a dot nudged off its ink would
+    // be printed from a screen whose colour the proof never showed — so the
+    // slider is not offered there rather than sitting inert.
+    if (mode !== 'spot') {
+      controls.push(slider({
         label: 'Colour jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0,
         title: 'Random value and alpha wobble per dot',
         get: () => L().color.jitter,
         set: (v) => s.updateLayerField(id, 'color', { jitter: v }),
-      }),
-    );
+      }));
+    }
     return controls;
   }
+
+  /**
+   * Spot inks: the controls that make a drawing printable by hand.
+   *
+   * A screenprint is N screens and nothing else, so this section is about
+   * choosing those N and deciding how strictly each dot is held to them.
+   * `Mixing` is the one that changes the character of the print: at 0 the dots
+   * never leave their nearest ink and the result posterises into flat areas of
+   * colour; at 1 they scatter between the two inks that reproduce the colour
+   * and the eye does the mixing, which with process inks is a scatter
+   * separation. Everything between is a partly mixed print.
+   */
+  private spotControls(id: string): Control[] {
+    const s = this.store;
+    const ia = this.interaction;
+    const L = (): Layer => s.layer(id)!;
+    const setC = (patch: Partial<Layer['color']>, key?: string): void =>
+      s.updateLayerField(id, 'color', patch, key);
+
+    const inkSetSelect = h('select', { class: 'ink-set-select' }) as HTMLSelectElement;
+    inkSetSelect.append(h('option', { value: '' }, 'Load an ink set…'));
+    for (const [key, set] of Object.entries(INK_SETS)) {
+      inkSetSelect.append(h('option', { value: key }, set.label));
+    }
+    inkSetSelect.addEventListener('change', () => {
+      const set = INK_SETS[inkSetSelect.value];
+      inkSetSelect.value = '';
+      if (!set) return;
+      setC({ palette: set.inks.map((c) => [...c] as Layer['color']['palette'][number]), paper: set.paper });
+    });
+
+    // Three fields, one history key, so this is a single undo rather than three.
+    const setUp = button('Set up for even coverage', () => {
+      s.updateLayerField(id, 'prefilter', { channel: 'flat' }, 'spot-setup');
+      s.updateLayerField(id, 'size', { fromTone: 0 }, 'spot-setup');
+      s.updateLayerField(id, 'color', { jitter: 0 }, 'spot-setup');
+    }, 'sm wide',
+      'Even dots everywhere, all the same size — so lightness comes only from the ink each dot takes');
+
+    const extract = button('Propose inks from the image', () => {
+      const src = this.getSource();
+      if (!src) return;
+      const c = L().color;
+      const found = extractPalette(src, c.palette.length || 3, c.paper);
+      if (found.length) setC({ palette: found });
+    }, 'sm wide', 'Cluster the photograph and use the colours it is actually made of');
+
+    return [
+      slider({
+        label: 'Inks', min: 1, max: 8, step: 1, interaction: ia,
+        title: 'How many screens you are willing to print',
+        get: () => L().color.palette.length,
+        set: (v) => {
+          const cur = L().color.palette;
+          const n = Math.round(v);
+          if (n === cur.length) return;
+          const next = cur.slice(0, n);
+          // Growing proposes the extra inks from the image when there is one,
+          // so adding a screen lands on a colour the picture needs rather than
+          // on black, which you would then have to hunt for by hand.
+          const src = this.getSource();
+          const found = src ? extractPalette(src, n, L().color.paper) : [];
+          while (next.length < n) next.push(found[next.length] ?? [0, 0, 0, 1]);
+          setC({ palette: next });
+        },
+      }),
+      paletteControl({
+        label: 'Palette', interaction: ia,
+        title: 'Print order, lightest screen first',
+        get: () => L().color.palette as [number, number, number, number][],
+        set: (v) => setC({ palette: v }),
+      }),
+      raw(extract),
+      raw(h('div', { class: 'ink-set-row' }, inkSetSelect)),
+      slider({
+        label: 'Mixing', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+        title: '0 posterises into flat colour; 1 scatters the dots so the eye mixes them',
+        get: () => L().color.mixing,
+        set: (v) => setC({ mixing: v }),
+      }),
+      hint(L().color.mixing < 0.02
+        ? 'Posterised: every dot takes its nearest ink, so areas come out flat and unmixed.'
+        : L().color.mixing > 0.98
+          ? 'Scattered: dots dither between two inks to rebuild the colour, as a process print does.'
+          : 'Partly mixed: dots stray towards a second ink, but the bands stay readable.'),
+      toggle({
+        label: 'Leave paper',
+        title: 'Highlights print as bare stock instead of taking the palest ink — one screen fewer',
+        get: () => L().color.paper !== null,
+        set: (v) => setC({ paper: v ? [1, 1, 1, 1] : null }),
+      }),
+      ...(L().color.paper
+        ? [colorControl({
+            label: 'Stock', interaction: ia,
+            get: () => L().color.paper ?? [1, 1, 1, 1],
+            set: (v) => setC({ paper: v }),
+          })]
+        : []),
+      readout(() => {
+        const c = L().color;
+        const screens = c.palette.length;
+        return `${screens} screen${screens === 1 ? '' : 's'} to burn` +
+          (c.paper ? ' · highlights left as paper' : '');
+      }),
+      // Density and dot size both track tone by default, and in spot mode the
+      // ink choice does too — so an untouched layer darkens the image three
+      // times over. Offer the fix where the problem is visible.
+      ...(evenCoverage(L()) ? [] : [
+        hint('This layer still gets fewer and smaller dots in the lights, and the ink now '
+          + 'lightens them again. For a print that matches the photograph, even it out.'),
+        raw(setUp),
+      ]),
+    ];
+  }
+}
+
+/** Whether a layer lays its dots down evenly, which is what spot mode wants. */
+function evenCoverage(layer: Layer): boolean {
+  return layer.prefilter.channel === 'flat' && layer.size.fromTone === 0;
 }
 
 function cap(s: string): string {

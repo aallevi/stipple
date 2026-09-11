@@ -2,12 +2,13 @@ import { defaultProject, BUILTIN_SHAPES } from '../core/defaults';
 import { Store } from '../core/store';
 import type { Project } from '../core/types';
 import { exportPDF } from '../export/pdf';
+import { exportPlates } from '../export/plates';
 import { exportPNG } from '../export/png';
 import { estimatePoints, exportSVG, WARN_POINTS } from '../export/svg';
 import { decodeImage } from '../image/loader';
 import { testCard } from '../image/testcard';
 import { Engine } from '../pipeline/engine';
-import { decodeNative, openFile, saveFile, supportedImageExtensions } from '../platform';
+import { decodeNative, openFile, saveFile, saveFiles, supportedImageExtensions } from '../platform';
 import { rasterBitmap } from '../shape/import';
 import { button, colorControl, h, readout, section, slider, type Control, type Interaction } from './controls';
 import { Inspector } from './inspector';
@@ -74,6 +75,7 @@ export class App {
       this.interaction,
       this.shapes,
       this.engine.voronoiAvailable,
+      () => this.engine.sourceImage,
     );
 
     root.append(this.buildLayout());
@@ -182,6 +184,8 @@ export class App {
           button('PNG', () => void this.doExport('png'), '', 'Export a raster image at the document resolution'),
           button('SVG', () => void this.doExport('svg'), '', 'Export vector geometry'),
           button('PDF', () => void this.doExport('pdf'), '', 'Export a print-ready vector PDF'),
+        button('Plates', () => void this.doExportPlates(), '',
+          'One black-on-white film per ink, plus a colour proof — for screenprinting'),
         ),
         h('div', { class: 'tool-group' },
           button('Save', () => void this.saveProject(), '', 'Save the project file'),
@@ -427,6 +431,45 @@ export class App {
       }
     } catch (err) {
       this.notify(`Export failed: ${(err as Error).message}`, true);
+    }
+  }
+
+  /**
+   * Separate into films.
+   *
+   * The confirm is not ceremony: this writes a folder of files, and a stack
+   * whose layers are not each a single ink will silently contribute nothing to
+   * any plate. Showing the screens it found, by name, is the cheapest way to
+   * catch that before you take the films to the exposure unit.
+   */
+  private async doExportPlates(): Promise<void> {
+    const project = this.store.get();
+    try {
+      this.engine.prepareForExport();
+      const { files, warnings } = exportPlates(this.engine, project, { baseName: 'stipple' });
+      if (files.length === 0) {
+        this.notify(warnings[0] ?? 'Nothing to separate.', true);
+        return;
+      }
+
+      const plates = files.filter((f) => !f.name.endsWith('-proof.svg'));
+      const summary = plates.map((f, i) => `  ${i + 1}. ${f.name}`).join('\n');
+      const ok = confirm(
+        `${plates.length} screen${plates.length === 1 ? '' : 's'} to burn, plus a colour proof:\n\n` +
+        `${summary}\n\n${warnings.length ? `${warnings.join('\n')}\n\n` : ''}` +
+        `Each film is black on white with registration marks in the margin.\n\nWrite the files?`,
+      );
+      if (!ok) return;
+
+      const { dir, written, failed } = await saveFiles(files);
+      if (dir === null) return;
+      if (failed.length) {
+        this.notify(`Wrote ${written.length} of ${files.length} files; ${failed[0].name} failed: ${failed[0].error}`, true);
+        return;
+      }
+      this.notify(`Exported ${plates.length} plate${plates.length === 1 ? '' : 's'} and a proof`, warnings.length > 0);
+    } catch (err) {
+      this.notify(`Plate export failed: ${(err as Error).message}`, true);
     }
   }
 

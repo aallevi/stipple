@@ -1,7 +1,7 @@
-import type { Project, ShapeDef } from '../core/types';
+import type { Layer, Project, ShapeDef } from '../core/types';
 import { POINT_STRIDE } from '../dist/types';
 import type { Engine } from '../pipeline/engine';
-import { cssColor, evaluatePoint, rgbaCss, shapeGeometry } from './geometry';
+import { cssColor, evaluatePoint, inkSetFor, rgbaCss, shapeGeometry } from './geometry';
 
 /**
  * Vector export.
@@ -16,6 +16,30 @@ import { cssColor, evaluatePoint, rgbaCss, shapeGeometry } from './geometry';
  */
 export const WARN_POINTS = 250_000;
 
+/**
+ * Restrict an export to one printing plate.
+ *
+ * A plate is not a layer — a single spot-ink layer holds every colour at once
+ * and only splits when each dot is asked which ink it took. So the filter has
+ * to work at two granularities, and `route` is what says which applies to a
+ * given layer. See `src/export/plates.ts` for how the routing is decided.
+ */
+export type PlateFilter = {
+  index: number;
+  route(layer: Layer): number | 'per-point';
+};
+
+export type ExportOptions = {
+  /** Keep only what belongs to one plate. Omit for the whole stack. */
+  plate?: PlateFilter;
+  /** Film output: solid black on white, no blend modes, no partial opacity. */
+  mono?: boolean;
+  /** Blank border in canvas px, which the registration marks live in. */
+  margin?: number;
+  /** Caption printed in the margin. */
+  label?: string;
+};
+
 export function estimatePoints(engine: Engine, project: Project): number {
   let n = 0;
   for (const layer of project.layers) {
@@ -25,9 +49,12 @@ export function estimatePoints(engine: Engine, project: Project): number {
   return n;
 }
 
-export function exportSVG(engine: Engine, project: Project): string {
+export function exportSVG(engine: Engine, project: Project, opts: ExportOptions = {}): string {
   engine.prepareForExport();
   const { width, height, background } = project.canvas;
+  const plate = opts.plate;
+  const mono = opts.mono ?? false;
+  const m = opts.margin ?? 0;
   const shapesUsed = new Map<string, ShapeDef>();
   for (const layer of project.layers) {
     if (!layer.visible || layer.opacity <= 0) continue;
@@ -39,9 +66,13 @@ export function exportSVG(engine: Engine, project: Project): string {
   out.push(`<?xml version="1.0" encoding="UTF-8"?>`);
   out.push(
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
-    `width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `width="${width + 2 * m}" height="${height + 2 * m}" ` +
+    `viewBox="${-m} ${-m} ${width + 2 * m} ${height + 2 * m}">`,
   );
-  out.push(`<rect width="${width}" height="${height}" fill="${rgbaCss(background)}"/>`);
+  // A film positive is read as ink where it is black, so the ground has to be
+  // paper-white regardless of what the document is set to.
+  const ground = mono ? '#ffffff' : rgbaCss(background);
+  out.push(`<rect x="${-m}" y="${-m}" width="${width + 2 * m}" height="${height + 2 * m}" fill="${ground}"/>`);
 
   out.push('<defs>');
   for (const def of shapesUsed.values()) {
@@ -76,11 +107,14 @@ export function exportSVG(engine: Engine, project: Project): string {
 
   for (const layer of project.layers) {
     if (!layer.visible || layer.opacity <= 0) continue;
+    const route = plate ? plate.route(layer) : 'all';
+    if (route !== 'all' && route !== 'per-point' && route !== plate!.index) continue;
     const points = engine.pointsFor(layer.id);
     const def = project.shapes.find((s) => s.id === layer.shapeId);
     if (!points || !def || points.count === 0) continue;
     const geo = shapeGeometry(def);
     const paintAttr = geo.kind === 'stroke' ? 'stroke' : 'fill';
+    const inks = inkSetFor(layer);
 
     const t = layer.transform;
     const cx = width / 2;
@@ -89,29 +123,87 @@ export function exportSVG(engine: Engine, project: Project): string {
       `translate(${cx + t.offsetX} ${cy + t.offsetY}) rotate(${t.rotate}) ` +
       `scale(${t.scale * (t.flipX ? -1 : 1)} ${t.scale * (t.flipY ? -1 : 1)}) translate(${-cx} ${-cy})`;
 
+    // A plate carries one ink laid down at full strength; opacity and blending
+    // are qualities of the stack, and a screen has neither.
+    const groupPaint = mono
+      ? ''
+      : ` opacity="${layer.opacity}" style="mix-blend-mode:${svgBlend(layer.blend)}"`;
     out.push(
       `<g id="${escapeAttr(layer.id)}" data-name="${escapeAttr(layer.name)}" ` +
-      `transform="${layerTransform}" opacity="${layer.opacity}" ` +
-      `style="mix-blend-mode:${svgBlend(layer.blend)}">`,
+      `transform="${layerTransform}"${groupPaint}>`,
     );
 
     const d = points.data;
     for (let i = 0; i < points.count; i++) {
       const o = i * POINT_STRIDE;
-      const p = evaluatePoint(layer, d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], sampleColor);
+      const p = evaluatePoint(layer, d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], sampleColor, inks);
       if (p.size <= 0.01 || p.alpha <= 0.001) continue;
+      if (route === 'per-point' && p.ink !== plate!.index) continue;
       const deg = (p.rotation * 180) / Math.PI;
       const rot = Math.abs(deg) > 0.01 ? ` rotate(${round(deg)})` : '';
-      const alpha = p.alpha < 0.999 ? ` ${paintAttr}-opacity="${round(p.alpha)}"` : '';
+      const paint = mono ? '#000000' : cssColor(p.rgb);
+      const alpha = !mono && p.alpha < 0.999 ? ` ${paintAttr}-opacity="${round(p.alpha)}"` : '';
       out.push(
         `<use xlink:href="#sh_${def.id}" transform="translate(${round(p.x)} ${round(p.y)})${rot} ` +
-        `scale(${round(p.size)})" ${paintAttr}="${cssColor(p.rgb)}"${alpha}/>`,
+        `scale(${round(p.size)})" ${paintAttr}="${paint}"${alpha}/>`,
       );
     }
     out.push('</g>');
   }
 
+  if (m > 0) out.push(registrationSVG(width, height, m, opts.label ?? ''));
+
   out.push('</svg>');
+  return out.join('\n');
+}
+
+/**
+ * Registration marks, identical on every plate.
+ *
+ * Four crosshairs on the centre lines plus corner crops, all outside the image
+ * so nothing is printed over the artwork. They are drawn in black on every
+ * plate including the proof: lining the screens up means laying one film over
+ * another and getting the crosses to disappear into each other.
+ */
+export function registrationSVG(width: number, height: number, m: number, label: string): string {
+  const r = m * 0.3;
+  const out: string[] = [`<g fill="none" stroke="#000000" stroke-width="${Math.max(0.5, m * 0.035)}">`];
+
+  // Cross-and-circle, broken at the centre. The gap is the point of the mark:
+  // with a solid cross, two films in near-register look the same as two in
+  // register, because the ink of one hides the misalignment of the other.
+  const gapC = r * 0.18;
+  const cross = (x: number, y: number): void => {
+    out.push(`<circle cx="${round(x)}" cy="${round(y)}" r="${round(r * 0.4)}"/>`);
+    out.push(
+      `<path d="M${round(x - r)} ${round(y)}H${round(x - gapC)}` +
+      `M${round(x + gapC)} ${round(y)}H${round(x + r)}` +
+      `M${round(x)} ${round(y - r)}V${round(y - gapC)}` +
+      `M${round(x)} ${round(y + gapC)}V${round(y + r)}"/>`,
+    );
+  };
+  cross(width / 2, -m / 2);
+  cross(width / 2, height + m / 2);
+  cross(-m / 2, height / 2);
+  cross(width + m / 2, height / 2);
+
+  // Corner crops: short ticks that stop short of the image edge, so trimming to
+  // them never cuts into the artwork.
+  const c = m * 0.45;
+  const gap = m * 0.2;
+  for (const [x, y, sx, sy] of [[0, 0, -1, -1], [width, 0, 1, -1], [0, height, -1, 1], [width, height, 1, 1]] as const) {
+    out.push(`<path d="M${round(x + sx * gap)} ${round(y)}H${round(x + sx * (gap + c))}"/>`);
+    out.push(`<path d="M${round(x)} ${round(y + sy * gap)}V${round(y + sy * (gap + c))}"/>`);
+  }
+  out.push('</g>');
+
+  if (label) {
+    out.push(
+      `<text x="${round(-m / 2)}" y="${round(-m / 2)}" fill="#000000" ` +
+      `font-family="monospace" font-size="${round(m * 0.3)}" ` +
+      `dominant-baseline="middle">${escapeAttr(label)}</text>`,
+    );
+  }
   return out.join('\n');
 }
 

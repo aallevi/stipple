@@ -22,6 +22,7 @@ const CYAN: RGBA = [0.0, 0.67, 0.93, 1];
 const MAGENTA: RGBA = [0.93, 0.0, 0.55, 1];
 const YELLOW: RGBA = [1.0, 0.94, 0.0, 1];
 const BLACK: RGBA = [0.08, 0.08, 0.08, 1];
+const WHITE: RGBA = [1, 1, 1, 1];
 
 export type Ink = { name: string; color: RGBA };
 
@@ -88,6 +89,32 @@ export const SEPARATIONS: Record<string, SeparationKind> = {
       { name: 'Black', color: BLACK },
     ],
   },
+};
+
+/**
+ * Ready-made ink sets for the `spot` colour mode.
+ *
+ * These are the same inks the process separations use, plus the small palettes
+ * that get printed by hand: a risograph drawer, a poster tritone. Picking one
+ * fills the palette; every swatch stays editable afterwards, because no real
+ * ink matches its nominal colour anyway.
+ */
+export const INK_SETS: Record<string, { label: string; inks: RGBA[]; paper: RGBA | null }> = {
+  cmy: { label: 'Process · cyan, magenta, yellow', inks: [CYAN, MAGENTA, YELLOW], paper: WHITE },
+  cmyk: { label: 'Process · CMYK', inks: [CYAN, MAGENTA, YELLOW, BLACK], paper: WHITE },
+  rgb: { label: 'Red, green, blue', inks: [[0.85, 0.12, 0.14, 1], [0.0, 0.62, 0.31, 1], [0.11, 0.25, 0.68, 1]], paper: WHITE },
+  riso: {
+    label: 'Risograph · fluoro pink, blue, yellow',
+    inks: [[1.0, 0.28, 0.56, 1], [0.0, 0.47, 0.84, 1], [1.0, 0.9, 0.0, 1]],
+    paper: [0.98, 0.96, 0.9, 1],
+  },
+  earth: {
+    label: 'Earth · brown, tan, ochre',
+    inks: [[0.32, 0.18, 0.11, 1], [0.66, 0.45, 0.28, 1], [0.89, 0.72, 0.35, 1]],
+    paper: [0.96, 0.93, 0.85, 1],
+  },
+  duo: { label: 'Duotone · warm red and black', inks: [[0.89, 0.25, 0.2, 1], BLACK], paper: WHITE },
+  mono: { label: 'One ink · black', inks: [BLACK], paper: WHITE },
 };
 
 /**

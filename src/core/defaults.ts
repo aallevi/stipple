@@ -49,6 +49,8 @@ export function defaultColor(): ColorParams {
     color: [0, 0, 0, 1],
     hueA: 210, hueB: 40, saturation: 0.6, lightness: 0.5,
     palette: [[0.85, 0.2, 0.25, 1], [0.15, 0.4, 0.75, 1], [0.95, 0.75, 0.15, 1]],
+    paper: [1, 1, 1, 1],
+    mixing: 1,
     jitter: 0,
     alpha: 1,
   };
@@ -95,6 +97,30 @@ export function defaultLayer(name = 'Stipple', algo: DistributionAlgo = 'jittere
     color: defaultColor(),
     transform: defaultTransform(),
   };
+}
+
+/**
+ * Fill in fields a project predates.
+ *
+ * Projects are plain JSON on disk with no migration step, so every field added
+ * after version 1 arrives as `undefined` from an older file. Most of those
+ * reach a shader uniform, where `undefined` becomes NaN and the failure is
+ * silent — a comparison against NaN is simply always false, so the feature
+ * quietly does nothing rather than erroring. Normalising on the way in is much
+ * cheaper than defending at every read.
+ */
+export function normaliseProject(project: Project): Project {
+  const dc = defaultColor();
+  for (const layer of project.layers ?? []) {
+    const c = layer.color;
+    if (c) {
+      if (c.paper === undefined) c.paper = c.mode === 'spot' ? dc.paper : null;
+      if (typeof c.mixing !== 'number' || !Number.isFinite(c.mixing)) c.mixing = dc.mixing;
+      if (!Array.isArray(c.palette)) c.palette = dc.palette.map((x) => [...x] as typeof x);
+    }
+    if (layer.prefilter && layer.prefilter.channel === undefined) layer.prefilter.channel = 'luma';
+  }
+  return project;
 }
 
 export function defaultProject(width = 1024, height = 1024): Project {

@@ -16,6 +16,8 @@ try {
       exportPDF: async () => (await import('./export/pdf')).exportPDF(app.debug.engine, app.debug.store.get()),
       exportPNG: async (scale = 1) =>
         (await import('./export/png')).exportPNG(app.debug.engine, app.debug.store.get(), scale),
+      exportPlates: async () =>
+        (await import('./export/plates')).exportPlates(app.debug.engine, app.debug.store.get(), { baseName: 'verify' }),
       presets: async () => (await import('./ui/presets')).PRESETS.map((p) => p.name),
       importShape: async (name: string, bytes: Uint8Array) => {
         const { importShape } = await import('./shape/import');

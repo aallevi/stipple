@@ -547,6 +547,28 @@ input[type='range']::-moz-range-thumb {
 .swatch::-webkit-color-swatch-wrapper { padding: 2px; }
 .swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
 
+/* The ink-set menu sits directly under the "propose inks" button, so it takes
+   the section's own gutter rather than the layer panel's inset row. */
+.ink-set-row { padding: 4px 0 2px; }
+.ink-set-select { width: 100%; }
+
+/* A palette reads as a set — you judge inks against each other — so the swatches
+   sit on one line in print order rather than as a stack of labelled rows. */
+.ctl-palette { align-items: center; }
+
+.palette-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.swatch.ink {
+  width: 26px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
 .readout {
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;

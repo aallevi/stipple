@@ -114,6 +114,8 @@ is usually enough to predict what it will do.
         │                     × (1 ± Size jitter)          ── in canvas px
         ├─► Rotation  = Angle + random·Randomness + contour·Follow contours
         └─► Colour    = mode(tone, random) × (1 ± Colour jitter)
+                        or, in Spot inks: nearest ink to the pixel,
+                        dithered towards a second one by Mixing
                                                                    │
                                                                    ▼
                                                     ┌──── the stamp ────┐
@@ -167,15 +169,58 @@ how much of a single ink the image asks for at each pixel, which is what makes a
 one plate of a separation; `Undercolour` decides how much of the neutral component it
 leaves to a black plate.
 
-**Colour** — solid, adaptive (hue ramps with tone), sampled from the image, or a random
-palette pick per point. This is the ink the layer *prints with*, which is separate from
-the ink it *measures* — the Ink section has a button to match one to the other.
+**Colour** — solid, adaptive (hue ramps with tone), sampled from the image, a random
+palette pick per point, or **spot inks**. This is the ink the layer *prints with*, which
+is separate from the ink it *measures* — the Ink section has a button to match one to
+the other.
 
-**Separations** — the menu at the top of the layer stack replaces the stack with one
-plate per ink: CMYK, CMY, RGB, duotone or tritone, screened or stippled. The plates
-multiply, carry the classic 30°-apart screen angles, and only the black plate carries
-the neutrals, so total ink coverage stays printable. Each plate is an ordinary layer
-afterwards — change its ink, its screen, or its shape like any other.
+### Printing it by hand
+
+There are two ways to get from a photograph to a set of screens, and they make
+different-looking prints. The tool supports both, and the difference is worth
+understanding before you pick one.
+
+**Spot inks — one layer, one dot, one ink.** Set `Colour mode → Spot inks`, choose two
+to eight inks, and every dot is printed with exactly one of them. That is the whole
+point: a dot is a hole in a screen, and a screen holds one colour, so a drawing where
+each mark commits to an ink is a drawing you can actually pull. `Mixing` decides how
+strictly each dot is held to its nearest ink:
+
+| `Mixing` | What you get |
+|---|---|
+| 0 | **Posterised.** Every dot takes the nearest ink; areas come out flat and unmixed — brown, light brown, ochre, with visible boundaries between them. |
+| ~0.5 | **Partly mixed.** Dots stray towards a second ink near the boundaries, softening them, while the bands stay readable. |
+| 1 | **Scattered.** Dots dither between the two inks that best rebuild the colour and the eye does the mixing. With cyan, magenta and yellow this is a process print. |
+
+`Leave paper` adds the stock as a candidate that is matched against but never printed,
+so highlights come out as bare paper instead of spending a whole screen on the palest
+ink. `Propose inks from the image` clusters the photograph and fills the palette with
+the colours it is actually made of, skipping anything close to the paper.
+
+One thing to know: by default a layer already gets fewer dots *and* smaller dots in the
+lights, and in spot mode the ink choice lightens them a third time — so the print comes
+out much paler than the photograph. The panel notices and offers **Set up for even
+coverage**, which lays dots down evenly at one size and leaves lightness entirely to
+which ink each dot takes. That is what a real scatter separation does.
+
+**Process separations — one layer per ink.** The menu at the top of the layer stack
+replaces the stack with one plate per ink: CMYK, CMY, RGB, duotone or tritone, screened
+or stippled. Here each layer *measures* the coverage of its own ink and prints solid in
+it; the plates multiply, carry the classic 30°-apart screen angles, and only the black
+plate carries the neutrals, so total ink coverage stays printable. Each plate is an
+ordinary layer afterwards — change its ink, its screen, or its shape like any other.
+
+Use spot inks when you want to choose the colours, and when a posterised or hand-printed
+look is the point. Use process separations when you want a faithful reproduction and are
+happy to print C, M, Y and K.
+
+**Plates** — the `Plates` button separates whatever is on screen into films: one SVG per
+ink, solid black on white, plus a colour proof, all with identical registration marks in
+a margin outside the artwork. It works on either route — a spot layer is split dot by
+dot, and a stack of solid-coloured layers is split layer by layer — and it tells you
+which screens it found before it writes anything. A layer that is not one ink (a hue
+ramp, or colour sampled straight from the image) cannot belong to a single screen, so it
+is left out and named in the warning.
 
 **Document** — width and height are staged, not applied live: resizing invalidates
 every cache and re-runs every distribution, so a drag across the slider would queue
@@ -192,10 +237,11 @@ that a layer reading the render below it has continuous tone to work with, and b
 precedes contrast so the contrast pivot can be moved onto whatever part of the range the
 input actually occupies.
 
-Export is PNG (tiled at the document DPI), SVG or PDF. Both vector formats emit one
-definition per shape and one instance per point, so files stay proportionate — though
-past a few hundred thousand points any vector file becomes slow to open, and the export
-dialog will say so.
+Export is PNG (tiled at the document DPI), SVG, PDF, or `Plates` for screenprinting.
+Both vector formats emit one definition per shape and one instance per point, so files
+stay proportionate — though past a few hundred thousand points any vector file becomes
+slow to open, and the export dialog will say so. Plate export writes SVG only; open the
+films in any vector editor if your bureau wants PDF.
 
 ---
 

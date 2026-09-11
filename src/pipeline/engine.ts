@@ -548,10 +548,30 @@ export class Engine {
     const src = this.source;
     if (!src) return [0, 0, 0];
     const { width, height } = this.store.get().canvas;
-    const px = Math.min(src.width - 1, Math.max(0, Math.round((x / width) * src.width)));
-    const py = Math.min(src.height - 1, Math.max(0, Math.round((y / height) * src.height)));
-    const i = (py * src.width + px) * 4;
-    return [src.rgba[i] / 255, src.rgba[i + 1] / 255, src.rgba[i + 2] / 255];
+
+    // Bilinear, with GL's half-texel offset, because the texture this mirrors is
+    // bound LINEAR. Nearest-neighbour was close enough while colour was a shade,
+    // but spot mode turns the sample into a hard choice of screen — half a texel
+    // of disagreement there puts a whole rim of dots on a different plate than
+    // the preview showed.
+    const fx = Math.min(src.width - 1, Math.max(0, (x / width) * src.width - 0.5));
+    const fy = Math.min(src.height - 1, Math.max(0, (y / height) * src.height - 0.5));
+    const x0 = Math.floor(fx), y0 = Math.floor(fy);
+    const x1 = Math.min(src.width - 1, x0 + 1), y1 = Math.min(src.height - 1, y0 + 1);
+    const tx = fx - x0, ty = fy - y0;
+
+    const out: [number, number, number] = [0, 0, 0];
+    for (let c = 0; c < 3; c++) {
+      const a = src.rgba[(y0 * src.width + x0) * 4 + c] * (1 - tx) + src.rgba[(y0 * src.width + x1) * 4 + c] * tx;
+      const b = src.rgba[(y1 * src.width + x0) * 4 + c] * (1 - tx) + src.rgba[(y1 * src.width + x1) * 4 + c] * tx;
+      out[c] = (a * (1 - ty) + b * ty) / 255;
+    }
+    return out;
+  }
+
+  /** The decoded photograph, for anything that has to look at it on the CPU. */
+  get sourceImage(): ImageSource | null {
+    return this.source;
   }
 
   /** Point data for vector export; regenerates at full quality if needed. */

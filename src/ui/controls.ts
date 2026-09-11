@@ -235,6 +235,54 @@ export function colorControl(opts: {
 }
 
 /**
+ * A row of ink swatches.
+ *
+ * Eight stacked colour rows would push everything else off the panel, and a
+ * palette is read as a set anyway — you judge inks against each other, not one
+ * at a time. So they sit on one line, in print order, at a size big enough to
+ * hit.
+ */
+export function paletteControl(opts: {
+  label: string;
+  get(): [number, number, number, number][];
+  set(v: [number, number, number, number][]): void;
+  title?: string;
+  interaction?: Interaction;
+}): Control {
+  const row = h('div', { class: 'palette-row' });
+  let inputs: HTMLInputElement[] = [];
+
+  const rebuild = (n: number): void => {
+    inputs = [];
+    for (let i = 0; i < n; i++) {
+      const sw = h('input', { type: 'color', class: 'swatch ink' }) as HTMLInputElement;
+      sw.title = `Ink ${i + 1}`;
+      sw.addEventListener('input', () => {
+        const next = opts.get().slice();
+        const [r, g, b] = hexToRGB(sw.value);
+        next[i] = [r, g, b, 1];
+        opts.set(next);
+      });
+      bindDrag(sw, opts.interaction);
+      inputs.push(sw);
+    }
+    row.replaceChildren(...inputs);
+  };
+
+  return {
+    el: h('div', { class: 'ctl ctl-palette' },
+      h('span', { class: 'ctl-label', title: opts.title ?? opts.label }, opts.label),
+      row,
+    ),
+    sync() {
+      const p = opts.get();
+      if (inputs.length !== p.length) rebuild(p.length);
+      p.forEach((c, i) => { inputs[i].value = rgbToHex(c[0], c[1], c[2]); });
+    },
+  };
+}
+
+/**
  * A two-handle window over 0..1, used for tone ranges.
  *
  * Both handles ride one track with the selected span highlighted, so the control

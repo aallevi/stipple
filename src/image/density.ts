@@ -47,6 +47,10 @@ export class DensityMap {
     // Rec. 709 luma, then gamma — or, for a separation, this layer's ink.
     const invGamma = 1 / Math.max(0.01, f.gamma);
     const ink = f.channel === 'ink' ? inkProjector(f) : null;
+    // `flat` reads as tone 0 everywhere, which downstream means "fully inked":
+    // an even field of dots, with lightness left entirely to the ink each one
+    // takes. Grades still apply on top, so the layer stays adjustable.
+
     for (let i = 0; i < n; i++) {
       const r = rgba[i * 4] / 255;
       const g = rgba[i * 4 + 1] / 255;
@@ -55,7 +59,9 @@ export class DensityMap {
       // measures coverage, which runs the other way, so it is inverted here and
       // every downstream rule — tone range, size ramp, masks — keeps working
       // without knowing which kind of layer it is looking at.
-      let v = ink ? 1 - ink(r, g, b) : 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      let v = f.channel === 'flat' ? 0
+        : ink ? 1 - ink(r, g, b)
+        : 0.2126 * r + 0.7152 * g + 0.0722 * b;
       if (f.gamma !== 1) v = Math.pow(v, invGamma);
       lum[i] = v < 0 ? 0 : v > 1 ? 1 : v;
     }
