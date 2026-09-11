@@ -53,7 +53,27 @@ void main() {
 }
 `;
 
-/** Draws a premultiplied texture to screen over the project background. */
+/**
+ * Draws a premultiplied texture to screen over the project background.
+ *
+ * The destination rectangle is a uniform rather than a `gl.viewport` call: a
+ * zoomed-in canvas easily asks for a viewport wider than `MAX_VIEWPORT_DIMS`
+ * (8192 on some drivers, 16384 on most), and drivers silently clamp it, which
+ * lands the image at the wrong size in the wrong place. Transforming the quad
+ * has no such ceiling, and it places the image at sub-pixel precision so panning
+ * and zooming stay smooth instead of snapping to whole pixels.
+ */
+const PRESENT_VS = `#version 300 es
+layout(location = 0) in vec2 aPos;
+uniform vec4 uRect;   // xy = origin in clip space, zw = size in clip space
+out vec2 vUV;
+void main() {
+  vec2 unit = aPos * 0.5 + 0.5;
+  vUV = unit;
+  gl_Position = vec4(uRect.xy + unit * uRect.zw, 0.0, 1.0);
+}
+`;
+
 const PRESENT_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
@@ -61,6 +81,10 @@ uniform vec4 uBackground;
 in vec2 vUV;
 out vec4 outColor;
 void main() {
+  // The shared geometry is an oversized triangle, so everything past the
+  // destination rectangle has to drop out; leaving it to CLAMP_TO_EDGE would
+  // smear the border pixels across the rest of the view.
+  if (any(lessThan(vUV, vec2(0.0))) || any(greaterThan(vUV, vec2(1.0)))) discard;
   vec4 c = texture(uTex, vUV);
   vec3 bg = uBackground.rgb * uBackground.a;
   outColor = vec4(c.rgb + bg * (1.0 - c.a), c.a + uBackground.a * (1.0 - c.a));
@@ -73,7 +97,7 @@ export class Compositor {
 
   constructor(private gl: GL, private quad: WebGLVertexArrayObject) {
     this.compositeProg = createProgram(gl, FULLSCREEN_VS, COMPOSITE_FS, 'composite');
-    this.presentProg = createProgram(gl, FULLSCREEN_VS, PRESENT_FS, 'present');
+    this.presentProg = createProgram(gl, PRESENT_VS, PRESENT_FS, 'present');
   }
 
   /** Blend `layerTex` onto `baseTex`, writing to the currently bound target. */
@@ -95,13 +119,23 @@ export class Compositor {
     gl.bindVertexArray(null);
   }
 
-  present(tex: WebGLTexture, background: [number, number, number, number]): void {
+  /**
+   * `rect` is the destination in clip space — origin then size. It defaults to
+   * the whole target, which is what the export path wants; the screen passes the
+   * placed, zoomed canvas rectangle.
+   */
+  present(
+    tex: WebGLTexture,
+    background: [number, number, number, number],
+    rect: [number, number, number, number] = [-1, -1, 2, 2],
+  ): void {
     const { gl } = this;
     const u = this.presentProg.uniforms;
     gl.useProgram(this.presentProg.program);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(u.uTex!, 0);
+    gl.uniform4f(u.uRect!, rect[0], rect[1], rect[2], rect[3]);
     gl.uniform4f(u.uBackground!, background[0], background[1], background[2], background[3]);
     gl.disable(gl.BLEND);
     gl.bindVertexArray(this.quad);

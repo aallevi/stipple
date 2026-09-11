@@ -302,6 +302,7 @@ export class Engine {
     }
 
     // Whichever target the ping-pong ended on holds the result.
+    this.finalTarget = base;
     this.finalTexture = base.texture;
     this.presentToScreen(project);
 
@@ -316,6 +317,7 @@ export class Engine {
   }
 
   private finalTexture: WebGLTexture | null = null;
+  private finalTarget: RenderTarget | null = null;
 
   /** The composited stack, for export and for the `below` readback. */
   get composedTexture(): WebGLTexture | null {
@@ -343,20 +345,29 @@ export class Engine {
 
   private ensureTargets(project: Project): void {
     const { gl } = this;
-    // Render at the canvas resolution, scaled toward the zoom level so that
-    // zooming in gains real detail, but bounded so memory stays predictable.
-    const zoomScale = Math.min(Math.max(this.viewport.zoom, 0.25), 2);
-    const edge = Math.max(project.canvas.width, project.canvas.height) * zoomScale;
+    // Always render at *at least* the output resolution, whatever the zoom.
+    // Below 1:1 the sub-pixel clamp in the point shader turns every mark into a
+    // one-pixel dab, so a zoomed-out preview showed an even haze rather than the
+    // image the export actually contains; the way to see the whole picture is to
+    // render it full size and let the mip chain average it down. Zooming past
+    // 1:1 supersamples instead, bounded so memory stays predictable.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const ss = this.viewport.zoom * dpr > 1.05 ? 2 : 1;
+    const edge = Math.max(project.canvas.width, project.canvas.height) * ss;
     const clamp = edge > MAX_RENDER_EDGE ? MAX_RENDER_EDGE / edge : 1;
-    const w = Math.max(1, Math.round(project.canvas.width * zoomScale * clamp));
-    const h = Math.max(1, Math.round(project.canvas.height * zoomScale * clamp));
+    const w = Math.max(1, Math.round(project.canvas.width * ss * clamp));
+    const h = Math.max(1, Math.round(project.canvas.height * ss * clamp));
 
     if (this.renderW === w && this.renderH === h && this.accum) return;
     this.accum?.dispose();
     this.scratch?.dispose();
     this.layerTarget?.dispose();
-    this.accum = new RenderTarget(gl, w, h);
-    this.scratch = new RenderTarget(gl, w, h);
+    this.finalTarget = null;
+    this.finalTexture = null;
+    // The ping-pong means either accumulator can end up being the one presented,
+    // so both carry a mip chain; the per-layer target is only ever read 1:1.
+    this.accum = new RenderTarget(gl, w, h, gl.RGBA8, gl.LINEAR, true);
+    this.scratch = new RenderTarget(gl, w, h, gl.RGBA8, gl.LINEAR, true);
     this.layerTarget = new RenderTarget(gl, w, h);
     this.renderW = w;
     this.renderH = h;
@@ -409,13 +420,23 @@ export class Engine {
     const dx = panX * dpr + (w - dw) / 2;
     const dy = panY * dpr + (h - dh) / 2;
 
-    gl.enable(gl.SCISSOR_TEST);
-    const sx = Math.max(0, Math.floor(dx));
-    const sy = Math.max(0, Math.floor(h - dy - dh));
-    gl.scissor(sx, sy, Math.min(w - sx, Math.ceil(dw)), Math.min(h - sy, Math.ceil(dh)));
-    gl.viewport(Math.round(dx), Math.round(h - dy - dh), Math.round(dw), Math.round(dh));
-    this.compositor.present(this.finalTexture!, project.canvas.background);
-    gl.disable(gl.SCISSOR_TEST);
+    // Displayed below 1:1 the marks have to be averaged down rather than
+    // point-sampled, or the preview reads as grain instead of as the image.
+    this.finalTarget?.setDisplayScale(dw / this.renderW);
+
+    // The placement is carried by the quad, not by `gl.viewport`: a zoomed-in
+    // canvas asks for a viewport far wider than the driver's maximum, and a
+    // clamped viewport puts the image at the wrong size in the wrong place.
+    this.compositor.present(this.finalTexture!, project.canvas.background, [
+      (2 * dx) / w - 1,
+      (2 * (h - dy - dh)) / h - 1,
+      (2 * dw) / w,
+      (2 * dh) / h,
+    ]);
+
+    // Compositing and the `below` readback sample these targets 1:1, so leave
+    // the filter where those passes expect it.
+    this.finalTarget?.setDisplayScale(1);
   }
 
   private clearScreen(): void {

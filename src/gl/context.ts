@@ -89,6 +89,7 @@ export function createProgram(gl: GL, vsSrc: string, fsSrc: string, label = 'pro
 export class RenderTarget {
   readonly fbo: WebGLFramebuffer;
   readonly texture: WebGLTexture;
+  readonly levels: number;
 
   constructor(
     private gl: GL,
@@ -96,10 +97,13 @@ export class RenderTarget {
     public height: number,
     internalFormat: number = gl.RGBA8,
     filter: number = gl.LINEAR,
+    /** Allocate a mip chain, for targets that get displayed below 1:1. */
+    mipmap = false,
   ) {
+    this.levels = mipmap ? 1 + Math.floor(Math.log2(Math.max(width, height))) : 1;
     this.texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, internalFormat, width, height);
+    gl.texStorage2D(gl.TEXTURE_2D, this.levels, internalFormat, width, height);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -119,6 +123,25 @@ export class RenderTarget {
     const { gl } = this;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     gl.viewport(0, 0, this.width, this.height);
+  }
+
+  /**
+   * Rebuild the mip chain and pick the filter for a given on-screen size.
+   *
+   * Sampling a stipple render below 1:1 with plain LINEAR point-samples between
+   * the dots: the marks alias into grain and the overall tone drifts. Averaging
+   * down through mips is what makes a zoomed-out preview read as the printed
+   * image rather than as noise.
+   */
+  setDisplayScale(scale: number): void {
+    const { gl } = this;
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    if (scale < 1 && this.levels > 1) {
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    } else {
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    }
   }
 
   clear(r = 0, g = 0, b = 0, a = 0): void {
