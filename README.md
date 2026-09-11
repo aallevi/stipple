@@ -192,6 +192,18 @@ strictly each dot is held to its nearest ink:
 | ~0.5 | **Partly mixed.** Dots stray towards a second ink near the boundaries, softening them, while the bands stay readable. |
 | 1 | **Scattered.** Dots dither between the two inks that best rebuild the colour and the eye does the mixing. With cyan, magenta and yellow this is a process print. |
 
+`Match on` decides what "nearest" means. **Colour** compares the whole colour, which is
+what a scatter separation wants. **Lightness only** ignores hue, so a palette ordered dark
+to light reads the photograph as tonal bands — which is why a portrait printed in three
+earth inks stays a portrait instead of breaking into unrelated hues.
+
+Two buttons build a palette from the picture. **Sample the colours** clusters it in full
+colour, for a scatter print. **Posterise the tones** builds a dark-to-light ramp keeping
+each band's own colour, then sets `Match on` to lightness and `Mixing` to 0 — the whole
+posterise in one press. The readout underneath the swatches says what share of the paper
+each screen would actually cover, which is the number that decides whether an ink is worth
+the pull.
+
 `Leave paper` adds the stock as a candidate that is matched against but never printed,
 so highlights come out as bare paper instead of spending a whole screen on the palest
 ink. `Propose inks from the image` clusters the photograph and fills the palette with
@@ -232,6 +244,19 @@ lineature, and all four exporters. A 900 × 600 document at 300 dpi is 3 × 2 in
 that is the size the SVG, the PDF and the plates open at; the PNG comes out 900 × 600,
 one pixel per canvas pixel. Set the resolution you intend to print at and the numbers
 in the panel are the numbers you get.
+
+**Measure in** decides what every length in the panel is written in — millimetres by
+default, or inches, or per cent of the short edge, or raw canvas pixels. The engine works
+in pixels throughout; this only changes how they are typed and read. Millimetres and
+inches hold as long as the resolution does. Per cent holds whatever size the document is,
+which is the one to pick when the same treatment has to work on pictures of different
+sizes.
+
+Opening an image takes its *shape*, not its pixel count: the document keeps its long edge
+and adopts the new aspect ratio, so a 4000px photograph and a 1200px one land in the same
+physical sheet and every length you tuned still means what it meant. No detail is lost by
+that — the density map samples the source at its own resolution regardless, and the canvas
+only sets how large the output raster is.
 
 **Tone mask** — restrict a layer to a slice of the tonal range, with feathered edges.
 Two layers with complementary masks and different shapes is the cheapest route to a

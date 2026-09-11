@@ -10,11 +10,12 @@ import { testCard } from '../image/testcard';
 import { Engine } from '../pipeline/engine';
 import { decodeNative, openFile, saveFile, saveFiles, supportedImageExtensions } from '../platform';
 import { rasterBitmap } from '../shape/import';
-import { button, colorControl, h, readout, section, slider, type Control, type Interaction } from './controls';
+import { button, colorControl, h, readout, section, select, slider, type Control, type Interaction } from './controls';
 import { Inspector } from './inspector';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
 import { PRESETS } from './presets';
+import { formatLength } from './units';
 
 /**
  * Wires the store, the engine and the panels together, and owns the render loop.
@@ -250,8 +251,8 @@ export class App {
         const c = this.store.get().canvas;
         const w = Math.round(pending.width);
         const h = Math.round(pending.height);
-        const inches = `${(w / c.dpi).toFixed(1)} × ${(h / c.dpi).toFixed(1)} in at ${c.dpi} dpi`;
-        return dirty() ? `${w} × ${h} px · ${inches} — not applied yet` : `${w} × ${h} px · ${inches}`;
+        const size = `${formatLength(w, c)} × ${formatLength(h, c)} at ${c.dpi} dpi`;
+        return dirty() ? `${w} × ${h} px · ${size} — not applied yet` : `${w} × ${h} px · ${size}`;
       }),
       // DPI is safe to apply live: it rescales the export and the halftone cell,
       // but it never resizes a buffer.
@@ -260,6 +261,21 @@ export class App {
         title: 'Used by the PNG and PDF exporters, and by the halftone lineature',
         get: () => this.store.get().canvas.dpi,
         set: (v) => this.store.updateCanvas({ dpi: Math.round(v) }),
+      }),
+      // Every length in the panel is written in this. The engine is unaffected —
+      // it works in canvas pixels whatever this says.
+      select<'mm' | 'in' | '%' | 'px'>({
+        label: 'Measure in',
+        title: 'Millimetres and inches hold as long as the resolution does; '
+          + 'per cent of the short edge holds whatever size the document is',
+        options: [
+          { value: 'mm', label: 'Millimetres' },
+          { value: 'in', label: 'Inches' },
+          { value: '%', label: 'Per cent of the short edge' },
+          { value: 'px', label: 'Canvas pixels' },
+        ],
+        get: () => this.store.get().canvas.units,
+        set: (v) => this.store.updateCanvas({ units: v }),
       }),
       colorControl({
         label: 'Background', interaction: this.interaction,
@@ -386,11 +402,30 @@ export class App {
         ? toSource(await decodeNative(picked.path))
         : await decodeImage(picked.bytes);
       this.engine.setSource(src);
-      // Match the canvas to the image so 100% means one canvas pixel per source
-      // pixel — otherwise spacing values mean something different per image.
-      this.store.updateCanvas({ width: src.width, height: src.height });
+      // Take the image's *shape*, not its pixel count.
+      //
+      // Adopting the source dimensions outright, as this used to, meant the
+      // document's physical size floated with whatever you opened: a 4000px
+      // photograph became a thirteen-inch sheet at 300 dpi and a 1200px one
+      // became four, so the same Size and Spacing produced a coarse stipple on
+      // the first and a fine one on the second, and nothing you tuned carried
+      // over. Holding the long edge keeps every length meaning what it meant.
+      //
+      // No detail is lost by this: the density map samples the source at its own
+      // resolution regardless, so the canvas only decides how large the output
+      // raster is — and Document still sets that to whatever you want.
+      const c = this.store.get().canvas;
+      const long = Math.max(c.width, c.height);
+      const aspect = src.width / src.height;
+      const width = aspect >= 1 ? long : Math.round(long * aspect);
+      const height = aspect >= 1 ? Math.round(long / aspect) : long;
+      this.store.updateCanvas({ width, height });
       this.fitToWindow();
-      this.notify(`Loaded ${picked.name} (${src.width}×${src.height})`);
+      this.notify(
+        `Loaded ${picked.name} (${src.width}×${src.height}) into a ` +
+        `${width}×${height} document — ${formatLength(width, { ...c, width, height })} × ` +
+        `${formatLength(height, { ...c, width, height })}`,
+      );
     } catch (err) {
       this.notify(`Could not open ${picked.name}: ${(err as Error).message}`, true);
     }

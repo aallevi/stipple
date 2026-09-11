@@ -1,7 +1,8 @@
 import type { Store } from '../core/store';
-import type { ShapeDef } from '../core/types';
+import type { CanvasSettings, ShapeDef } from '../core/types';
 import { SHAPE_PAD } from '../shape/rasterize';
 import { hint, readout, select, slider, type Control, type Interaction } from './controls';
+import { formatLength } from './units';
 
 /**
  * Geometry controls for whichever shape the selected layer is stamping.
@@ -17,6 +18,8 @@ export function shapeParamControls(
   shapeId: string,
   /** The layer's dark-end size in px, for resolving the fractions below. */
   sizePx: () => number,
+  /** For writing those pixels back out in the document's own unit. */
+  canvas: () => CanvasSettings,
 ): Control[] {
   const def = store.get().shapes.find((s) => s.id === shapeId);
   if (!def) return [hint('This layer points at a shape that is no longer in the library.')];
@@ -24,6 +27,7 @@ export function shapeParamControls(
   // Every shape is drawn to the same radius inside its cell, so this one line
   // converts any of the fractions below into the pixels they actually produce.
   const across = (): number => sizePx() * (1 - SHAPE_PAD);
+  const len = (px: number): string => formatLength(px, canvas());
 
   switch (def.kind) {
     case 'line':
@@ -33,31 +37,28 @@ export function shapeParamControls(
           const d = store.get().shapes.find((x) => x.id === shapeId) as LineDef | undefined;
           if (!d) return '';
           const extent = across() * d.length;
-          return `${fmt(extent)} px long · ${fmt(extent * d.thickness)} px thick, in the darks`;
+          return `${len(extent)} long · ${len(extent * d.thickness)} thick, in the darks`;
         }),
       ];
     case 'polygon':
       return [
         ...polygonControls(store, ia, def),
-        readout(() => `${fmt(across())} px across, in the darks`),
+        readout(() => `${len(across())} across, in the darks`),
       ];
     case 'circle':
       return [
         hint('A circle has no geometry to tune. Duplicate a line or polygon shape, or import your own.'),
-        readout(() => `${fmt(across())} px across, in the darks`),
+        readout(() => `${len(across())} across, in the darks`),
       ];
     case 'svg':
       return [hint(`Vector artwork imported from a file — ${def.paths.length} path${def.paths.length === 1 ? '' : 's'}, drawn as-is.`),
-        readout(() => `${fmt(across())} px across, in the darks`)];
+        readout(() => `${len(across())} across, in the darks`)];
     case 'raster':
       return [hint(`Bitmap stamp imported from a file — ${def.width}×${def.height}, masked by its alpha channel.`),
-        readout(() => `${fmt(across())} px across, in the darks`)];
+        readout(() => `${len(across())} across, in the darks`)];
   }
 }
 
-function fmt(px: number): string {
-  return px < 10 ? px.toFixed(2) : px.toFixed(1);
-}
 
 type LineDef = Extract<ShapeDef, { kind: 'line' }>;
 type PolygonDef = Extract<ShapeDef, { kind: 'polygon' }>;

@@ -468,6 +468,37 @@ check('every printed dot is exactly one ink', assigned.off === 0,
 check('paper leaves highlights unprinted', assigned.dropped > 0,
   `${assigned.dropped.toLocaleString()} of ${(assigned.dropped + assigned.printed).toLocaleString()} dots left as stock`);
 
+// A panel that rebuilds itself mid-drag throws away the control the pointer is
+// holding, so the slider moves one notch and stops. It looks like a dead
+// control and nothing in the types or the unit tests can see it, so drag a real
+// one here: Inks is the slider whose value used to be in the rebuild key.
+const dragged = await (async () => {
+  const row = page.locator('.ctl').filter({ has: page.locator('.ctl-label', { hasText: /^Inks$/ }) }).first();
+  const range = row.locator('input[type=range]').first();
+  await range.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(150);
+  const b = await range.boundingBox();
+  if (!b) return null;
+  await page.mouse.move(b.x + b.width * 0.28, b.y + b.height / 2);
+  await page.mouse.down();
+  for (const f of [0.4, 0.55, 0.7, 0.85, 1]) {
+    await page.mouse.move(b.x + b.width * f, b.y + b.height / 2);
+    await page.waitForTimeout(50);
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  return page.evaluate(() => window.__stipple.store.get().layers[0].color.palette.length);
+})();
+check('a slider can be dragged across its range without the panel rebuilding under it',
+  dragged === 8, `Inks reached ${dragged} of 8`);
+
+// Put it back to three inks for the plate checks below.
+await page.evaluate(({ PALETTE }) => {
+  const { store } = window.__stipple;
+  store.updateLayerField(store.get().layers[0].id, 'color', { palette: PALETTE });
+}, { PALETTE });
+await page.waitForTimeout(400);
+
 const plates = await page.evaluate(async () => {
   const r = await window.__stipple.exportPlates();
   return {

@@ -338,6 +338,25 @@ export function rangeControl(opts: {
   };
 }
 
+/**
+ * Show a control only when a condition holds, without rebuilding the panel.
+ *
+ * The alternative — putting the condition in the inspector's rebuild key — tears
+ * down and recreates every control in the section whenever it flips, which kills
+ * whatever drag or colour picker was open at the time. Toggling `hidden` on one
+ * element does not.
+ */
+export function when(cond: () => boolean, inner: Control): Control {
+  return {
+    el: inner.el,
+    sync() {
+      const on = cond();
+      inner.el.hidden = !on;
+      if (on) inner.sync();
+    },
+  };
+}
+
 export function section(
   title: string,
   controls: Control[],

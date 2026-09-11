@@ -50,6 +50,7 @@ export function defaultColor(): ColorParams {
     hueA: 210, hueB: 40, saturation: 0.6, lightness: 0.5,
     palette: [[0.85, 0.2, 0.25, 1], [0.15, 0.4, 0.75, 1], [0.95, 0.75, 0.15, 1]],
     paper: [1, 1, 1, 1],
+    matchBy: 'colour',
     mixing: 1,
     jitter: 0,
     alpha: 1,
@@ -111,11 +112,13 @@ export function defaultLayer(name = 'Stipple', algo: DistributionAlgo = 'jittere
  */
 export function normaliseProject(project: Project): Project {
   const dc = defaultColor();
+  if (project.canvas && !project.canvas.units) project.canvas.units = 'mm';
   for (const layer of project.layers ?? []) {
     const c = layer.color;
     if (c) {
       if (c.paper === undefined) c.paper = c.mode === 'spot' ? dc.paper : null;
       if (typeof c.mixing !== 'number' || !Number.isFinite(c.mixing)) c.mixing = dc.mixing;
+      if (c.matchBy !== 'colour' && c.matchBy !== 'tone') c.matchBy = dc.matchBy;
       if (!Array.isArray(c.palette)) c.palette = dc.palette.map((x) => [...x] as typeof x);
     }
     if (layer.prefilter && layer.prefilter.channel === undefined) layer.prefilter.channel = 'luma';
@@ -126,7 +129,7 @@ export function normaliseProject(project: Project): Project {
 export function defaultProject(width = 1024, height = 1024): Project {
   return {
     version: 1,
-    canvas: { width, height, dpi: 300, background: [1, 1, 1, 1] },
+    canvas: { width, height, dpi: 300, background: [1, 1, 1, 1], units: 'mm' },
     shapes: BUILTIN_SHAPES.map((s) => ({ ...s })),
     layers: [defaultLayer('Stipple 1')],
   };

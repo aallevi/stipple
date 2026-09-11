@@ -193,6 +193,11 @@ export function inkName(c: RGBA, index = 0): string {
   h *= 60;
 
   const dark = max < 0.55;
+  // Warm, muted and mid-light is the range earth palettes live in, and calling
+  // those "orange" makes a three-ink poster read as orange, orange and orange.
+  const muted = chroma / max < 0.62;
+  if (h >= 15 && h < 70 && muted && !dark) return max < 0.8 ? 'tan' : 'sand';
+
   if (h < 15 || h >= 345) return dark ? 'maroon' : 'red';
   if (h < 40) return dark ? 'brown' : 'orange';
   if (h < 70) return dark ? 'olive' : 'yellow';

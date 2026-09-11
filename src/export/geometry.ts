@@ -65,7 +65,7 @@ export function evaluatePoint(
   let alpha = layer.color.alpha * layer.color.color[3];
   if (layer.color.mode === 'spot' && inks && sampleImage) {
     const [sr, sg, sb] = sampleImage(x, y);
-    const idx = assignInk(inks, sr, sg, sb, layer.color.mixing, rand);
+    const idx = assignInk(inks, sr, sg, sb, layer.color.mixing, rand, layer.color.matchBy === 'tone');
     if (idx >= inks.inkCount) alpha = 0; // bare paper: nothing is printed here
     else plate = idx;
   }

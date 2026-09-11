@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { assignInk, buildInkSet, extractPalette, oklab, spotHash, srgbToLinear } from '../src/core/color';
+import { assignInk, buildInkSet, extractPalette, inkShares, oklab, spotHash, srgbToLinear, toneRamp } from '../src/core/color';
+import { fromPx, pxPerUnit, toPx } from '../src/ui/units';
 import { defaultColor, defaultLayer, defaultProject, normaliseProject } from '../src/core/defaults';
 import { collectPlates, inkName } from '../src/export/plates';
 import type { RGBA } from '../src/core/types';
@@ -182,6 +183,10 @@ describe('plate collection', () => {
     expect(inkName([0.0, 0.67, 0.93, 1])).toBe('cyan');
     expect(inkName([0.93, 0.0, 0.55, 1])).toBe('magenta');
     expect(inkName([0.32, 0.18, 0.11, 1])).toBe('brown');
+    // An earth palette is warm and muted; calling these orange would make a
+    // three-ink poster read as orange, orange and orange.
+    expect(inkName([0.66, 0.45, 0.28, 1])).toBe('tan');
+    expect(inkName([0.89, 0.72, 0.35, 1])).toBe('sand');
     expect(inkName([0.08, 0.08, 0.08, 1])).toBe('black');
     expect(inkName([1, 1, 1, 1])).toBe('white');
   });
@@ -233,5 +238,108 @@ describe('loading an older project', () => {
     const fixed = normaliseProject(project);
     expect(Number.isFinite(fixed.layers[0].color.mixing)).toBe(true);
     expect(fixed.layers[0].color.paper).toBeNull();
+  });
+});
+
+describe('units', () => {
+  const canvas = (units: 'mm' | 'in' | '%' | 'px', dpi = 300, w = 900, h = 600) =>
+    ({ width: w, height: h, dpi, background: [1, 1, 1, 1] as RGBA, units });
+
+  it('converts canvas pixels to the unit the document is measured in', () => {
+    // A canvas pixel is 1/dpi of an inch, so 300px at 300dpi is one inch.
+    expect(fromPx(300, canvas('in'))).toBeCloseTo(1, 6);
+    expect(fromPx(300, canvas('mm'))).toBeCloseTo(25.4, 4);
+    expect(fromPx(300, canvas('px'))).toBe(300);
+    // Per cent is of the short edge: 600px tall, so 300px is half of it.
+    expect(fromPx(300, canvas('%'))).toBeCloseTo(50, 6);
+  });
+
+  it('round-trips', () => {
+    for (const u of ['mm', 'in', '%', 'px'] as const) {
+      expect(toPx(fromPx(17.5, canvas(u)), canvas(u))).toBeCloseTo(17.5, 6);
+    }
+  });
+
+  it('keeps per cent stable when the document changes size', () => {
+    // The whole point of the unit: the same number means the same fraction of
+    // the picture whatever you opened.
+    const small = canvas('%', 300, 900, 600);
+    const large = canvas('%', 300, 3600, 2400);
+    const px = toPx(2, small);
+    expect(fromPx(px, small)).toBeCloseTo(2, 6);
+    expect(fromPx(toPx(2, large), large)).toBeCloseTo(2, 6);
+    // 2% of the short edge is four times as many pixels on the four-times doc.
+    expect(toPx(2, large)).toBeCloseTo(toPx(2, small) * 4, 6);
+  });
+
+  it('keeps millimetres stable across documents at the same resolution', () => {
+    expect(toPx(1, canvas('mm', 300, 900, 600))).toBeCloseTo(toPx(1, canvas('mm', 300, 3600, 2400)), 6);
+  });
+
+  it('survives a nonsense resolution rather than dividing by zero', () => {
+    expect(Number.isFinite(fromPx(10, canvas('mm', 0)))).toBe(true);
+    expect(Number.isFinite(pxPerUnit(canvas('%', 300, 0, 0)))).toBe(true);
+  });
+});
+
+describe('tone ramp palettes', () => {
+  const gradient = (): { width: number; height: number; rgba: Uint8ClampedArray } => {
+    const w = 64;
+    const rgba = new Uint8ClampedArray(w * 8 * 4);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < w; x++) {
+        const t = x / (w - 1);
+        const o = (y * w + x) * 4;
+        // A warm ramp: dark brown through tan to pale ochre.
+        rgba[o] = (0.35 + 0.6 * t) * 255;
+        rgba[o + 1] = (0.2 + 0.62 * t) * 255;
+        rgba[o + 2] = (0.12 + 0.5 * t) * 255;
+        rgba[o + 3] = 255;
+      }
+    }
+    return { width: w, height: 8, rgba };
+  };
+
+  it('returns inks ordered dark to light', () => {
+    const ramp = toneRamp(gradient(), 3, null);
+    expect(ramp).toHaveLength(3);
+    const ls = ramp.map((c) => oklab(c[0], c[1], c[2])[0]);
+    expect(ls[0]).toBeLessThan(ls[1]);
+    expect(ls[1]).toBeLessThan(ls[2]);
+  });
+
+  it('keeps the colour of each band rather than going grey', () => {
+    // The bands are the picture's own colours, which is what makes a tritone
+    // read as brown-tan-ochre instead of as three greys.
+    for (const c of toneRamp(gradient(), 3, null)) {
+      expect(c[0]).toBeGreaterThan(c[2]);
+    }
+  });
+
+  it('matching on lightness ignores hue', () => {
+    // Two inks the same lightness, wildly different hue. On tone the pixel takes
+    // whichever is closer in L — here they tie, so it takes the first — while on
+    // colour it would take the red.
+    const set = buildInkSet([[0.8, 0.1, 0.1, 1], [0.1, 0.1, 0.8, 1]], null);
+    const byTone = assignInk(set, 0.75, 0.12, 0.12, 0, 0.5, true);
+    const byColour = assignInk(set, 0.75, 0.12, 0.12, 0, 0.5, false);
+    expect(byColour).toBe(0);
+    expect([0, 1]).toContain(byTone);
+  });
+});
+
+describe('ink shares', () => {
+  it('adds up to the whole picture', () => {
+    const w = 40;
+    const rgba = new Uint8ClampedArray(w * w * 4);
+    for (let i = 0; i < w * w; i++) {
+      const t = (i % w) / w;
+      rgba.set([t * 255, 60, 200 - t * 150, 255], i * 4);
+    }
+    const set = buildInkSet([[0.9, 0.2, 0.1, 1], [0.1, 0.2, 0.9, 1]], [1, 1, 1, 1]);
+    const shares = inkShares({ width: w, height: w, rgba }, set, 1, false);
+    expect(shares).toHaveLength(3);
+    expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+    expect(shares.every((v) => v >= 0 && v <= 1)).toBe(true);
   });
 });

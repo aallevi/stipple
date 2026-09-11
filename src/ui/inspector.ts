@@ -1,4 +1,4 @@
-import { extractPalette } from '../core/color';
+import { buildInkSet, extractPalette, inkShares, toneRamp } from '../core/color';
 import { defaultDistribution, defaultRotation, defaultSize } from '../core/defaults';
 import type { Store } from '../core/store';
 import {
@@ -6,11 +6,13 @@ import {
   type JitteredParams, type Layer, type VoronoiParams,
 } from '../core/types';
 import {
-  button, colorControl, h, hint, paletteControl, raw, rangeControl, readout, section, select,
-  slider, toggle, type Control, type Interaction,
+  button, colorControl, group, h, hint, paletteControl, raw, rangeControl, readout, section,
+  select, slider, toggle, when, type Control, type Interaction,
 } from './controls';
+import { inkName } from '../export/plates';
 import { INK_SETS } from './separations';
 import { shapeParamControls } from './shapeparams';
+import { formatLength, lengthSlider } from './units';
 
 /**
  * Parameter panel for the selected layer.
@@ -54,12 +56,17 @@ export class Inspector {
     // down the slider under the cursor.
     const shape = this.store.get().shapes.find((s) => s.id === layer.shapeId);
     const shapeForm = shape ? `${shape.kind}/${shape.kind === 'line' ? shape.style : ''}` : 'none';
-    // The ink count and whether paper is in play both change which controls
-    // exist, so they belong in the key alongside the mode.
+    // Only things that change which controls *exist* belong here. The ink count
+    // and the paper toggle used to be in this key, which meant dragging the Inks
+    // slider rebuilt the section on its first step and threw away the slider the
+    // pointer was holding — the control could not be moved past one notch.
+    // Those now hide and show themselves through `when`.
+    // The unit and the resolution both decide the range and step a length slider
+    // is built with, so a change to either has to remake those controls.
+    const canvas = this.store.get().canvas;
     const key = [layer.id, layer.distribution.algo, layer.color.mode, layer.shapeId,
-      shapeForm, layer.prefilter.channel ?? 'luma',
-      layer.color.palette.length, layer.color.paper ? 'paper' : 'no-paper',
-      layer.color.mode === 'spot' && !evenCoverage(layer) ? 'uneven' : 'even'].join(':');
+      shapeForm, layer.prefilter.channel ?? 'luma', canvas.units, canvas.dpi,
+      canvas.units === '%' ? `${canvas.width}x${canvas.height}` : ''].join(':');
     if (key !== this.builtFor) {
       this.build(layer);
       this.builtFor = key;
@@ -106,13 +113,13 @@ export class Inspector {
       // it selects, so choosing a shape and tuning it is one movement.
       section('Shape', [
         raw(this.shapeLibrary.el),
-        ...shapeParamControls(s, ia, layer.shapeId, () => L().size.max),
+        ...shapeParamControls(s, ia, layer.shapeId, () => L().size.max, () => this.store.get().canvas),
       ], false, [this.shapeLibrary.duplicateBtn, this.shapeLibrary.importBtn]),
 
       section('Size', [
-        slider({
-          label: 'Size', min: 0, max: 60, step: 0.1, interaction: ia,
-          unit: 'px', reset: size.max,
+        lengthSlider({
+          label: 'Size', minPx: 0, maxPx: 60, interaction: ia,
+          canvas: this.store.get().canvas, reset: size.max,
           title: 'The overall mark size — what a dot in the shadows measures across',
           get: () => L().size.max,
           set: (v) => {
@@ -133,9 +140,10 @@ export class Inspector {
         }),
         readout(() => {
           const l = L();
+          const c = this.store.get().canvas;
           const lo = lightEndSize(l);
           const [a, b] = l.size.invert ? ['darks', 'lights'] : ['lights', 'darks'];
-          return `${a} ${lo.toFixed(1)} px \u2192 ${b} ${l.size.max.toFixed(1)} px`;
+          return `${a} ${formatLength(lo, c)} → ${b} ${formatLength(l.size.max, c)}`;
         }),
         slider({
           label: 'Tone response', min: 0.3, max: 2, step: 0.05, interaction: ia, reset: 1,
@@ -254,8 +262,9 @@ export class Inspector {
           get: () => L().prefilter.gamma,
           set: (v) => s.updateLayerField(id, 'prefilter', { gamma: v }),
         }),
-        slider({
-          label: 'Blur', min: 0, max: 20, step: 0.5, interaction: ia, unit: 'px', reset: 0,
+        lengthSlider({
+          label: 'Blur', minPx: 0, maxPx: 20, interaction: ia, reset: 0,
+          canvas: this.store.get().canvas,
           get: () => L().prefilter.blur,
           set: (v) => s.updateLayerField(id, 'prefilter', { blur: v }),
         }),
@@ -361,9 +370,10 @@ export class Inspector {
       const d = (): JitteredParams => L().distribution as JitteredParams;
       return [
         algoSelect,
-        slider({
-          label: 'Spacing', min: 1, max: 40, step: 0.25, interaction: ia, unit: 'px', reset: 4,
-          title: 'Distance between candidate dots, in canvas pixels — lower means more dots',
+        lengthSlider({
+          label: 'Spacing', minPx: 1, maxPx: 40, interaction: ia, reset: 4,
+          canvas: this.store.get().canvas,
+          title: 'Distance between candidate dots — lower means more dots',
           get: () => d().spacing,
           set: (v) => s.updateLayerField(id, 'distribution', { spacing: v } as never),
         }),
@@ -553,6 +563,27 @@ export class Inspector {
     const setC = (patch: Partial<Layer['color']>, key?: string): void =>
       s.updateLayerField(id, 'color', patch, key);
 
+    // Estimating the split walks a few thousand pixels, and `sync` runs on every
+    // store change, so cache it against the things it actually depends on.
+    let sharesKey = '';
+    let sharesText = '';
+    const shares = (): string => {
+      const c = L().color;
+      const src = this.getSource();
+      if (!src) return 'Open an image to see how the inks divide it.';
+      const key = `${JSON.stringify(c.palette)}|${JSON.stringify(c.paper)}|${c.mixing}|${c.matchBy}`;
+      if (key === sharesKey) return sharesText;
+      const set = buildInkSet(c.palette, c.paper ?? null);
+      const split = inkShares(src, set, c.mixing, c.matchBy === 'tone');
+      const parts = split.map((v, i) => {
+        const name = i >= set.inkCount ? 'paper' : inkName(c.palette[i], i);
+        return `${name} ${Math.round(v * 100)}%`;
+      });
+      sharesKey = key;
+      sharesText = parts.join(' · ');
+      return sharesText;
+    };
+
     const inkSetSelect = h('select', { class: 'ink-set-select' }) as HTMLSelectElement;
     inkSetSelect.append(h('option', { value: '' }, 'Load an ink set…'));
     for (const [key, set] of Object.entries(INK_SETS)) {
@@ -566,20 +597,25 @@ export class Inspector {
     });
 
     // Three fields, one history key, so this is a single undo rather than three.
-    const setUp = button('Set up for even coverage', () => {
+    const evenUp = (): void => {
       s.updateLayerField(id, 'prefilter', { channel: 'flat' }, 'spot-setup');
       s.updateLayerField(id, 'size', { fromTone: 0 }, 'spot-setup');
       s.updateLayerField(id, 'color', { jitter: 0 }, 'spot-setup');
-    }, 'sm wide',
-      'Even dots everywhere, all the same size — so lightness comes only from the ink each dot takes');
+    };
 
-    const extract = button('Propose inks from the image', () => {
+    const propose = (mode: 'colour' | 'tone'): void => {
       const src = this.getSource();
       if (!src) return;
       const c = L().color;
-      const found = extractPalette(src, c.palette.length || 3, c.paper);
-      if (found.length) setC({ palette: found });
-    }, 'sm wide', 'Cluster the photograph and use the colours it is actually made of');
+      const n = c.palette.length || 3;
+      const found = mode === 'tone' ? toneRamp(src, n, c.paper) : extractPalette(src, n, c.paper);
+      if (!found.length) return;
+      // Posterising is a decision about the whole layer, not just the swatches:
+      // a tonal ramp only reads as bands if the dots stop straying between them
+      // and the match stops caring about hue.
+      if (mode === 'tone') setC({ palette: found, matchBy: 'tone', mixing: 0 }, 'posterise');
+      else setC({ palette: found }, 'extract');
+    };
 
     return [
       slider({
@@ -591,61 +627,78 @@ export class Inspector {
           const n = Math.round(v);
           if (n === cur.length) return;
           const next = cur.slice(0, n);
-          // Growing proposes the extra inks from the image when there is one,
-          // so adding a screen lands on a colour the picture needs rather than
-          // on black, which you would then have to hunt for by hand.
+          // Growing proposes the extra inks from the image when there is one, so
+          // adding a screen lands on a colour the picture needs rather than on
+          // black, which you would then have to hunt for by hand.
           const src = this.getSource();
-          const found = src ? extractPalette(src, n, L().color.paper) : [];
+          const c = L().color;
+          const found = src
+            ? (c.matchBy === 'tone' ? toneRamp(src, n, c.paper) : extractPalette(src, n, c.paper))
+            : [];
           while (next.length < n) next.push(found[next.length] ?? [0, 0, 0, 1]);
-          setC({ palette: next });
+          setC({ palette: next }, 'ink-count');
         },
       }),
       paletteControl({
         label: 'Palette', interaction: ia,
-        title: 'Print order, lightest screen first',
+        title: 'Print order, darkest screen first',
         get: () => L().color.palette as [number, number, number, number][],
         set: (v) => setC({ palette: v }),
       }),
-      raw(extract),
+      readout(shares),
+      group('Choosing the inks'),
+      raw(button('Sample the colours', () => propose('colour'), 'sm',
+        'Cluster the photograph and use the colours it is actually made of')),
+      raw(button('Posterise the tones', () => propose('tone'), 'sm',
+        'Build a dark-to-light ramp from the photograph and hold every dot to it')),
       raw(h('div', { class: 'ink-set-row' }, inkSetSelect)),
+
+      group('How the dots use them'),
+      select<'colour' | 'tone'>({
+        label: 'Match on',
+        title: 'Whether an ink is chosen by its whole colour or by lightness alone',
+        options: [
+          { value: 'colour', label: 'Colour' },
+          { value: 'tone', label: 'Lightness only' },
+        ],
+        get: () => L().color.matchBy,
+        set: (v) => setC({ matchBy: v }),
+      }),
       slider({
         label: 'Mixing', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
         title: '0 posterises into flat colour; 1 scatters the dots so the eye mixes them',
         get: () => L().color.mixing,
         set: (v) => setC({ mixing: v }),
       }),
-      hint(L().color.mixing < 0.02
-        ? 'Posterised: every dot takes its nearest ink, so areas come out flat and unmixed.'
-        : L().color.mixing > 0.98
-          ? 'Scattered: dots dither between two inks to rebuild the colour, as a process print does.'
-          : 'Partly mixed: dots stray towards a second ink, but the bands stay readable.'),
+      // A live readout, not a hint: the hint was baked when the section was built
+      // and went on describing whatever the slider said at the time.
+      readout(() => {
+        const m = L().color.mixing;
+        return m < 0.02 ? 'Posterised — every dot takes its nearest ink'
+          : m > 0.98 ? 'Scattered — two inks dither to rebuild the colour'
+          : `Partly mixed — dots stray up to ${Math.round(m * 100)}% of the way to a second ink`;
+      }),
+
+      group('Paper'),
       toggle({
         label: 'Leave paper',
         title: 'Highlights print as bare stock instead of taking the palest ink — one screen fewer',
         get: () => L().color.paper !== null,
         set: (v) => setC({ paper: v ? [1, 1, 1, 1] : null }),
       }),
-      ...(L().color.paper
-        ? [colorControl({
-            label: 'Stock', interaction: ia,
-            get: () => L().color.paper ?? [1, 1, 1, 1],
-            set: (v) => setC({ paper: v }),
-          })]
-        : []),
-      readout(() => {
-        const c = L().color;
-        const screens = c.palette.length;
-        return `${screens} screen${screens === 1 ? '' : 's'} to burn` +
-          (c.paper ? ' · highlights left as paper' : '');
-      }),
+      when(() => L().color.paper !== null, colorControl({
+        label: 'Stock', interaction: ia,
+        get: () => L().color.paper ?? [1, 1, 1, 1],
+        set: (v) => setC({ paper: v }),
+      })),
+
       // Density and dot size both track tone by default, and in spot mode the
       // ink choice does too — so an untouched layer darkens the image three
       // times over. Offer the fix where the problem is visible.
-      ...(evenCoverage(L()) ? [] : [
-        hint('This layer still gets fewer and smaller dots in the lights, and the ink now '
-          + 'lightens them again. For a print that matches the photograph, even it out.'),
-        raw(setUp),
-      ]),
+      when(() => !evenCoverage(L()),
+        hint('Dots also thin out and shrink in the lights, so the ink lightens them a third '
+          + 'time and the print comes out pale. Even it out and let the ink carry it.')),
+      when(() => !evenCoverage(L()), raw(button('Set up for even coverage', evenUp, 'sm wide'))),
     ];
   }
 }

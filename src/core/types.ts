@@ -212,6 +212,15 @@ export type ColorParams = {
    */
   paper: RGBA | null;
   /**
+   * `spot`: what "nearest ink" is measured on.
+   *
+   * `colour` compares the full colour, which is what a scatter separation wants.
+   * `tone` compares lightness only, so a palette ordered dark to light lands as
+   * flat tonal bands — the classic posterise, and the reason a photograph does
+   * not break into unrelated hues when you only have three earth inks.
+   */
+  matchBy: 'colour' | 'tone';
+  /**
    * `spot`: how far a dot may stray from its nearest ink, 0..1.
    *
    * 0 posterises — every dot takes the closest ink, so areas come out flat and
@@ -258,6 +267,17 @@ export type CanvasSettings = {
   height: number;
   dpi: number;
   background: RGBA;
+  /**
+   * What lengths are shown in. The engine works in canvas pixels throughout —
+   * this only changes how they are written and typed.
+   *
+   * A canvas pixel is a poor thing to design in, because opening a bigger
+   * photograph makes the document bigger and every mark suddenly reads smaller
+   * against it. `mm` and `in` are stable as long as the resolution is; `%` of
+   * the short edge is stable whatever happens, which is what you want when the
+   * same treatment has to work on images of different sizes.
+   */
+  units: 'mm' | 'in' | '%' | 'px';
 };
 
 export type Project = {

@@ -60,6 +60,7 @@ uniform vec3  uSpotLin[${MAX_SPOT}];
 uniform int   uSpotInks;
 uniform int   uSpotCount;
 uniform float uSpotMixing;
+uniform float uSpotChroma;   // 1 match on colour, 0 match on lightness alone
 
 out vec2 vUV;
 out vec4 vColor;
@@ -118,7 +119,9 @@ int spotInk(vec3 rgb, float rnd) {
   float best = 1e9;
   for (int i = 0; i < ${MAX_SPOT}; i++) {
     if (i >= uSpotCount) break;
-    vec3 d = lab - uSpotLab[i];
+    // Zeroing the a and b axes makes this "closest in lightness", which is what
+    // turns a dark-to-light palette into tonal bands instead of hue scatter.
+    vec3 d = (lab - uSpotLab[i]) * vec3(1.0, uSpotChroma, uSpotChroma);
     float dd = dot(d, d);
     if (dd < best) { best = dd; a = i; }
   }
@@ -403,6 +406,7 @@ export class PointRenderer {
       gl.uniform1i(u.uSpotInks!, set.inkCount);
       gl.uniform1i(u.uSpotCount!, set.count);
       gl.uniform1f(u.uSpotMixing!, c.mixing);
+      gl.uniform1f(u.uSpotChroma!, c.matchBy === 'tone' ? 0 : 1);
     }
   }
 

@@ -16,7 +16,7 @@ export type Preset = {
 function project(width: number, height: number, layers: Layer[], bg: [number, number, number, number] = [1, 1, 1, 1]): Project {
   return {
     version: 1,
-    canvas: { width, height, dpi: 300, background: bg },
+    canvas: { width, height, dpi: 300, background: bg, units: 'mm' },
     shapes: [],
     layers,
   };

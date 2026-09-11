@@ -100,17 +100,25 @@ export function assignInk(
   r: number, g: number, b: number,
   mixing: number,
   rand: number,
+  /** Compare lightness only, ignoring hue — the posterise. */
+  byTone = false,
 ): number {
   const n = set.count;
   if (n === 0) return 0;
 
   const [tl, ta, tb] = oklab(r, g, b);
+  // Dropping the a and b axes turns the search into "which ink is closest in
+  // lightness", so a palette running dark to light reads the photograph as
+  // tonal bands instead of scattering it across whichever inks happen to share
+  // its hues. With three earth inks that is the difference between a poster and
+  // a mess.
+  const ca = byTone ? 0 : 1;
   let a = 0;
   let best = Infinity;
   for (let i = 0; i < n; i++) {
     const dl = tl - set.lab[i * 3];
-    const da = ta - set.lab[i * 3 + 1];
-    const db = tb - set.lab[i * 3 + 2];
+    const da = (ta - set.lab[i * 3 + 1]) * ca;
+    const db = (tb - set.lab[i * 3 + 2]) * ca;
     const d = dl * dl + da * da + db * db;
     if (d < best) { best = d; a = i; }
   }
@@ -127,6 +135,9 @@ export function assignInk(
 
   for (let i = 0; i < n; i++) {
     if (i === a) continue;
+    // The partner search stays in linear light whichever way the nearest ink was
+    // chosen: how two inks average when their dots sit side by side is a fact
+    // about light, not about how the match was made.
     const er = set.lin[i * 3] - ar, eg = set.lin[i * 3 + 1] - ag, eb = set.lin[i * 3 + 2] - ab;
     const ee = er * er + eg * eg + eb * eb;
     // Two inks at the same point define no line to mix along.
@@ -293,4 +304,119 @@ function mulberryish(seed: number): () => number {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/**
+ * A palette that runs dark to light, for posterising.
+ *
+ * Ordinary clustering spreads inks across whatever hues the photograph contains,
+ * which is right for a scatter separation and wrong for a poster: three inks
+ * chosen that way will not stack into a legible image. Clustering on lightness
+ * alone and keeping each band's average colour gives the set a printmaker
+ * actually asks for — a dark, a mid and a light that happen to be brown, tan and
+ * ochre because that is what the picture is made of.
+ *
+ * Returned darkest first, which is also the order the screens are printed in.
+ */
+export function toneRamp(
+  src: { width: number; height: number; rgba: Uint8ClampedArray | Uint8Array },
+  k: number,
+  paper: RGBA | null = null,
+  sampleTarget = 20000,
+): RGBA[] {
+  const total = src.width * src.height;
+  const stride = Math.max(1, Math.floor(total / sampleTarget));
+  const paperL = paper ? oklab(paper[0], paper[1], paper[2])[0] : null;
+
+  const L: number[] = [];
+  const A: number[] = [];
+  const B: number[] = [];
+  for (let i = 0; i < total; i += stride) {
+    const o = i * 4;
+    if (src.rgba[o + 3] < 8) continue;
+    const lab = oklab(src.rgba[o] / 255, src.rgba[o + 1] / 255, src.rgba[o + 2] / 255);
+    // Anything as light as the stock is already printed, by not printing it.
+    if (paperL !== null && lab[0] > paperL - 0.06) continue;
+    L.push(lab[0]); A.push(lab[1]); B.push(lab[2]);
+  }
+  const n = L.length;
+  if (n === 0) return [];
+  const want = Math.max(1, Math.min(k, n));
+
+  // Seed on quantiles rather than at random: lightness is one-dimensional and
+  // ordered, so the good answer is known in advance and Lloyd's only refines it.
+  const sorted = [...L].sort((a, b) => a - b);
+  const cen = Array.from({ length: want }, (_, c) => sorted[Math.floor(((c + 0.5) / want) * (n - 1))]);
+
+  for (let iter = 0; iter < 20; iter++) {
+    const sum = new Float64Array(want);
+    const count = new Int32Array(want);
+    for (let i = 0; i < n; i++) {
+      let bi = 0;
+      let best = Infinity;
+      for (let c = 0; c < want; c++) {
+        const d = Math.abs(L[i] - cen[c]);
+        if (d < best) { best = d; bi = c; }
+      }
+      sum[bi] += L[i];
+      count[bi] += 1;
+    }
+    for (let c = 0; c < want; c++) if (count[c] > 0) cen[c] = sum[c] / count[c];
+  }
+
+  // Second pass for the colour of each band, so the inks are the picture's own.
+  const sl = new Float64Array(want);
+  const sa = new Float64Array(want);
+  const sb = new Float64Array(want);
+  const count = new Int32Array(want);
+  for (let i = 0; i < n; i++) {
+    let bi = 0;
+    let best = Infinity;
+    for (let c = 0; c < want; c++) {
+      const d = Math.abs(L[i] - cen[c]);
+      if (d < best) { best = d; bi = c; }
+    }
+    sl[bi] += L[i]; sa[bi] += A[i]; sb[bi] += B[i]; count[bi] += 1;
+  }
+
+  const out: RGBA[] = [];
+  for (let c = 0; c < want; c++) {
+    if (count[c] === 0) continue;
+    const [r, g, b] = oklabToSrgb(sl[c] / count[c], sa[c] / count[c], sb[c] / count[c]);
+    out.push([r, g, b, 1]);
+  }
+  return out;
+}
+
+/**
+ * Roughly what share of the picture each screen would carry.
+ *
+ * "Three screens to burn" is not the number you need when you are deciding
+ * whether a palette is worth the ink — how much of the paper each one actually
+ * covers is. Sampled off the image rather than off the point field, so it
+ * answers a question about the separation and not about the current spacing.
+ */
+export function inkShares(
+  src: { width: number; height: number; rgba: Uint8ClampedArray | Uint8Array },
+  set: InkSet,
+  mixing: number,
+  byTone: boolean,
+  samples = 4000,
+): number[] {
+  const out = new Array(set.count).fill(0);
+  const total = src.width * src.height;
+  if (total === 0 || set.count === 0) return out;
+  const stride = Math.max(1, Math.floor(total / samples));
+
+  let seen = 0;
+  for (let i = 0; i < total; i += stride) {
+    const o = i * 4;
+    if (src.rgba[o + 3] < 8) continue;
+    // Walk the random stream rather than fixing it, so a dithered palette shows
+    // its true split instead of whatever one arbitrary draw happened to give.
+    const rand = (seen % 97) / 97;
+    out[assignInk(set, src.rgba[o] / 255, src.rgba[o + 1] / 255, src.rgba[o + 2] / 255, mixing, rand, byTone)] += 1;
+    seen += 1;
+  }
+  return seen === 0 ? out : out.map((v) => v / seen);
 }
