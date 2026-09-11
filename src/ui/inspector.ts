@@ -1,21 +1,26 @@
-import { defaultDistribution } from '../core/defaults';
+import { defaultDistribution, defaultRotation, defaultSize } from '../core/defaults';
 import type { Store } from '../core/store';
 import {
   BLEND_MODES, type BlendMode, type DistributionAlgo, type HalftoneParams,
   type JitteredParams, type Layer, type VoronoiParams,
 } from '../core/types';
 import {
-  colorControl, h, rangeControl, section, select, slider, toggle,
+  colorControl, h, raw, rangeControl, section, select, slider, toggle,
   type Control, type Interaction,
 } from './controls';
+import { shapeParamControls } from './shapeparams';
 
 /**
  * Parameter panel for the selected layer.
  *
- * Rebuilt only when the layer or its algorithm changes; every other update is a
- * `sync()` that pushes current values into existing inputs. That keeps focus and
- * scroll position stable while you drag a slider, and means an undo does not
- * tear down the panel you are working in.
+ * Rebuilt only when the layer, its algorithm, its colour mode or its shape kind
+ * changes; every other update is a `sync()` that pushes current values into
+ * existing inputs. That keeps focus and scroll position stable while you drag a
+ * slider, and means an undo does not tear down the panel you are working in.
+ *
+ * Section order follows the order you actually work in: what the layer is, where
+ * the dots go, what a dot looks like, how big, which way round, what colour —
+ * then the three refinement sections, collapsed until wanted.
  */
 export class Inspector {
   readonly el = h('div', { class: 'inspector' });
@@ -25,20 +30,27 @@ export class Inspector {
   constructor(
     private store: Store,
     private interaction: Interaction,
-    private shapeOptions: () => { value: string; label: string }[],
+    /** The shape library, hosted inside the Shape section it drives. */
+    private shapeLibrary: { el: HTMLElement; importBtn: HTMLElement; duplicateBtn: HTMLElement },
     private voronoiAvailable: boolean,
   ) {}
 
-  /** Rebuild if the layer identity or algorithm changed, otherwise just sync. */
+  /** Rebuild if the layer identity or an option that changes the form did. */
   update(layerId: string | null): void {
     const layer = layerId ? this.store.layer(layerId) : undefined;
     if (!layer) {
-      this.el.replaceChildren(h('p', { class: 'empty' }, 'Select a layer.'));
+      this.el.replaceChildren(h('p', { class: 'empty' }, 'Select a layer to edit it.'));
       this.builtFor = '';
       this.controls = [];
       return;
     }
-    const key = `${layer.id}:${layer.distribution.algo}:${layer.color.mode}`;
+    // The shape's kind decides which geometry sliders exist, and a line's style
+    // decides whether they are labelled as arms or as segments — both have to be
+    // in the key, but nothing else about the shape, or every drag would tear
+    // down the slider under the cursor.
+    const shape = this.store.get().shapes.find((s) => s.id === layer.shapeId);
+    const shapeForm = shape ? `${shape.kind}/${shape.kind === 'line' ? shape.style : ''}` : 'none';
+    const key = [layer.id, layer.distribution.algo, layer.color.mode, layer.shapeId, shapeForm].join(':');
     if (key !== this.builtFor) {
       this.build(layer);
       this.builtFor = key;
@@ -51,11 +63,14 @@ export class Inspector {
     const s = this.store;
     const ia = this.interaction;
     const L = (): Layer => s.layer(id)!;
+    const size = defaultSize();
+    const rot = defaultRotation();
 
     const sections: Control[] = [
       section('Layer', [
         select<'source' | 'below'>({
           label: 'Reads from',
+          title: 'Sample the photo, or the composite of everything stacked underneath',
           options: [
             { value: 'source', label: 'Source image' },
             { value: 'below', label: 'Layers below' },
@@ -64,13 +79,13 @@ export class Inspector {
           set: (v) => s.updateLayer(id, { input: v }),
         }),
         select<BlendMode>({
-          label: 'Blend',
+          label: 'Blend mode',
           options: BLEND_MODES.map((m) => ({ value: m, label: cap(m) })),
           get: () => L().blend,
           set: (v) => s.updateLayer(id, { blend: v }),
         }),
         slider({
-          label: 'Opacity', min: 0, max: 1, step: 0.01, interaction: ia,
+          label: 'Layer opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
           get: () => L().opacity,
           set: (v) => s.updateLayer(id, { opacity: v }),
         }),
@@ -78,54 +93,65 @@ export class Inspector {
 
       section('Distribution', this.distributionControls(id)),
 
+      // The picker sits at the top of the section whose sliders reshape whatever
+      // it selects, so choosing a shape and tuning it is one movement.
       section('Shape', [
-        select({
-          label: 'Shape',
-          options: this.shapeOptions(),
-          get: () => L().shapeId,
-          set: (v) => s.updateLayer(id, { shapeId: v }),
-        }),
+        raw(this.shapeLibrary.el),
+        ...shapeParamControls(s, ia, layer.shapeId),
+      ], false, [this.shapeLibrary.duplicateBtn, this.shapeLibrary.importBtn]),
+
+      section('Size', [
         slider({
-          label: 'Size min', min: 0, max: 60, step: 0.1, interaction: ia,
-          title: 'Point size at the light end of the tone range',
+          label: 'Size in lights', min: 0, max: 60, step: 0.1, interaction: ia,
+          unit: 'px', reset: size.min,
+          title: 'Dot size at the light end of the tone range',
           get: () => L().size.min,
           set: (v) => s.updateLayerField(id, 'size', { min: v }),
         }),
         slider({
-          label: 'Size max', min: 0, max: 60, step: 0.1, interaction: ia,
-          title: 'Point size at the dark end of the tone range',
+          label: 'Size in darks', min: 0, max: 60, step: 0.1, interaction: ia,
+          unit: 'px', reset: size.max,
+          title: 'Dot size at the dark end of the tone range',
           get: () => L().size.max,
           set: (v) => s.updateLayerField(id, 'size', { max: v }),
         }),
         slider({
-          label: 'Size ← tone', min: 0, max: 1, step: 0.01, interaction: ia,
-          title: '0 keeps every point at Size max; 1 lets tone drive size fully',
+          label: 'Tone influence', min: 0, max: 1, step: 0.01, interaction: ia, reset: size.fromTone,
+          title: '0 holds every dot at "Size in darks"; 1 lets tone drive size fully',
           get: () => L().size.fromTone,
           set: (v) => s.updateLayerField(id, 'size', { fromTone: v }),
         }),
         slider({
-          label: 'Size jitter', min: 0, max: 1, step: 0.01, interaction: ia,
+          label: 'Size jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: size.jitter,
+          title: 'Random size variation per dot',
           get: () => L().size.jitter,
           set: (v) => s.updateLayerField(id, 'size', { jitter: v }),
         }),
         toggle({
-          label: 'Invert size mapping',
+          label: 'Swap light / dark',
+          title: 'Put the big dots in the highlights instead of the shadows',
           get: () => L().size.invert,
           set: (v) => s.updateLayerField(id, 'size', { invert: v }),
         }),
+      ]),
+
+      section('Rotation', [
         slider({
-          label: 'Rotation', min: -180, max: 180, step: 1, interaction: ia,
+          label: 'Angle', min: -180, max: 180, step: 1, interaction: ia, unit: '°', reset: rot.base,
+          title: 'Turns every dot by the same amount',
           get: () => L().rotation.base,
           set: (v) => s.updateLayerField(id, 'rotation', { base: v }),
         }),
         slider({
-          label: 'Random rotation', min: 0, max: 1, step: 0.01, interaction: ia,
+          label: 'Randomness', min: 0, max: 1, step: 0.01, interaction: ia, reset: rot.random,
+          title: 'Random turn per dot, up to a full revolution at 1',
           get: () => L().rotation.random,
           set: (v) => s.updateLayerField(id, 'rotation', { random: v }),
         }),
         slider({
           label: 'Follow contours', min: 0, max: 1, step: 0.01, interaction: ia,
-          title: 'Aligns shapes to the image contours — most visible with line shapes',
+          reset: rot.followGradient,
+          title: 'Aligns dots to the image contours — most visible with line shapes',
           get: () => L().rotation.followGradient,
           set: (v) => s.updateLayerField(id, 'rotation', { followGradient: v }),
         }),
@@ -135,12 +161,14 @@ export class Inspector {
 
       section('Tone mask', [
         rangeControl({
-          label: 'Tone window', interaction: ia,
+          label: 'Keep tones', interaction: ia,
+          title: 'Dots are placed only where the source tone falls inside this window',
           get: () => L().mask.toneRange,
           set: (v) => s.updateLayerField(id, 'mask', { toneRange: v }),
         }),
         slider({
-          label: 'Feather', min: 0, max: 0.5, step: 0.01, interaction: ia,
+          label: 'Feather', min: 0, max: 0.5, step: 0.01, interaction: ia, reset: 0,
+          title: 'Softens the edges of the tone window',
           get: () => L().mask.feather,
           set: (v) => s.updateLayerField(id, 'mask', { feather: v }),
         }),
@@ -153,27 +181,27 @@ export class Inspector {
 
       section('Image adjust', [
         slider({
-          label: 'Brightness', min: -1, max: 1, step: 0.01, interaction: ia,
+          label: 'Brightness', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
           get: () => L().prefilter.brightness,
           set: (v) => s.updateLayerField(id, 'prefilter', { brightness: v }),
         }),
         slider({
-          label: 'Contrast', min: -1, max: 1, step: 0.01, interaction: ia,
+          label: 'Contrast', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
           get: () => L().prefilter.contrast,
           set: (v) => s.updateLayerField(id, 'prefilter', { contrast: v }),
         }),
         slider({
-          label: 'Gamma', min: 0.1, max: 4, step: 0.01, interaction: ia,
+          label: 'Gamma', min: 0.1, max: 4, step: 0.01, interaction: ia, reset: 1,
           get: () => L().prefilter.gamma,
           set: (v) => s.updateLayerField(id, 'prefilter', { gamma: v }),
         }),
         slider({
-          label: 'Blur', min: 0, max: 20, step: 0.5, interaction: ia,
+          label: 'Blur', min: 0, max: 20, step: 0.5, interaction: ia, unit: 'px', reset: 0,
           get: () => L().prefilter.blur,
           set: (v) => s.updateLayerField(id, 'prefilter', { blur: v }),
         }),
         slider({
-          label: 'Sharpen', min: 0, max: 1, step: 0.01, interaction: ia,
+          label: 'Sharpen', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0,
           get: () => L().prefilter.sharpen,
           set: (v) => s.updateLayerField(id, 'prefilter', { sharpen: v }),
         }),
@@ -186,22 +214,22 @@ export class Inspector {
 
       section('Transform', [
         slider({
-          label: 'Scale', min: 0.1, max: 4, step: 0.01, interaction: ia,
+          label: 'Scale', min: 0.1, max: 4, step: 0.01, interaction: ia, unit: '×', reset: 1,
           get: () => L().transform.scale,
           set: (v) => s.updateLayerField(id, 'transform', { scale: v }),
         }),
         slider({
-          label: 'Rotate', min: -180, max: 180, step: 1, interaction: ia,
+          label: 'Rotate', min: -180, max: 180, step: 1, interaction: ia, unit: '°', reset: 0,
           get: () => L().transform.rotate,
           set: (v) => s.updateLayerField(id, 'transform', { rotate: v }),
         }),
         slider({
-          label: 'Offset X', min: -1000, max: 1000, step: 1, interaction: ia,
+          label: 'Offset X', min: -1000, max: 1000, step: 1, interaction: ia, unit: 'px', reset: 0,
           get: () => L().transform.offsetX,
           set: (v) => s.updateLayerField(id, 'transform', { offsetX: v }),
         }),
         slider({
-          label: 'Offset Y', min: -1000, max: 1000, step: 1, interaction: ia,
+          label: 'Offset Y', min: -1000, max: 1000, step: 1, interaction: ia, unit: 'px', reset: 0,
           get: () => L().transform.offsetY,
           set: (v) => s.updateLayerField(id, 'transform', { offsetY: v }),
         }),
@@ -222,6 +250,11 @@ export class Inspector {
     this.el.replaceChildren(...sections.map((c) => c.el));
   }
 
+  /**
+   * Algorithm first, then its own parameters, then the two settings every
+   * algorithm shares and the seed — so the shared tail stays in the same place
+   * no matter which algorithm is selected.
+   */
   private distributionControls(id: string): Control[] {
     const s = this.store;
     const ia = this.interaction;
@@ -241,17 +274,27 @@ export class Inspector {
       },
     });
 
-    const common = (): Control[] => [
+    const seed = (): Control => slider({
+      label: 'Seed', min: 1, max: 9999, step: 1,
+      title: 'Re-rolls the randomness without changing any other setting',
+      get: () => (L().distribution as JitteredParams).seed,
+      set: (v) => s.updateLayerField(id, 'distribution', { seed: Math.round(v) } as never),
+    });
+
+    const tail = (withSeed: boolean): Control[] => [
       rangeControl({
         label: 'Tone range', interaction: ia,
+        title: 'Tones outside this window get no dots at all',
         get: () => L().distribution.toneRange,
         set: (v) => s.updateLayerField(id, 'distribution', { toneRange: v } as never),
       }),
       toggle({
-        label: 'Stipple the highlights instead',
+        label: 'Stipple the lights',
+        title: 'Place dots in the highlights instead of the shadows',
         get: () => L().distribution.invertDensity,
         set: (v) => s.updateLayerField(id, 'distribution', { invertDensity: v } as never),
       }),
+      ...(withSeed ? [seed()] : []),
     ];
 
     const algo = L().distribution.algo;
@@ -260,34 +303,30 @@ export class Inspector {
       return [
         algoSelect,
         slider({
-          label: 'Spacing', min: 1, max: 40, step: 0.25, interaction: ia,
-          title: 'Distance between candidate points, in canvas pixels',
+          label: 'Spacing', min: 1, max: 40, step: 0.25, interaction: ia, unit: 'px', reset: 4,
+          title: 'Distance between candidate dots, in canvas pixels — lower means more dots',
           get: () => d().spacing,
           set: (v) => s.updateLayerField(id, 'distribution', { spacing: v } as never),
         }),
         slider({
-          label: 'Phases', min: 1, max: 64, step: 1, interaction: ia,
+          label: 'Tone steps', min: 1, max: 64, step: 1, interaction: ia, reset: 12,
           title: 'Number of discrete tone bands; higher is smoother',
           get: () => d().phases,
           set: (v) => s.updateLayerField(id, 'distribution', { phases: v } as never),
         }),
         slider({
-          label: 'Jitter', min: 0, max: 1, step: 0.01, interaction: ia,
+          label: 'Position jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0.85,
+          title: '0 is a perfect grid, 1 scatters each dot anywhere in its cell',
           get: () => d().jitter,
           set: (v) => s.updateLayerField(id, 'distribution', { jitter: v } as never),
         }),
         slider({
-          label: 'Overpaint', min: 0, max: 4, step: 1, interaction: ia,
+          label: 'Overpaint', min: 0, max: 4, step: 1, interaction: ia, reset: 0,
           title: 'Extra offset passes layered over the first',
           get: () => d().overpaint,
           set: (v) => s.updateLayerField(id, 'distribution', { overpaint: v } as never),
         }),
-        slider({
-          label: 'Seed', min: 1, max: 9999, step: 1,
-          get: () => d().seed,
-          set: (v) => s.updateLayerField(id, 'distribution', { seed: v } as never),
-        }),
-        ...common(),
+        ...tail(true),
       ];
     }
 
@@ -296,28 +335,23 @@ export class Inspector {
       return [
         algoSelect,
         slider({
-          label: 'Points', min: 500, max: 200000, step: 500, interaction: ia,
+          label: 'Dot count', min: 500, max: 200000, step: 500, interaction: ia, reset: 20000,
           get: () => d().points,
           set: (v) => s.updateLayerField(id, 'distribution', { points: v } as never),
         }),
         slider({
-          label: 'Relaxation', min: 0, max: 60, step: 1, interaction: ia,
+          label: 'Relaxation', min: 0, max: 60, step: 1, interaction: ia, reset: 16,
           title: 'Lloyd iterations — higher is more evenly spaced',
           get: () => d().iterations,
           set: (v) => s.updateLayerField(id, 'distribution', { iterations: v } as never),
         }),
         slider({
-          label: 'Density curve', min: 0.5, max: 4, step: 0.05, interaction: ia,
-          title: 'Above 1 pushes points harder into the shadows',
+          label: 'Density curve', min: 0.5, max: 4, step: 0.05, interaction: ia, reset: 1.6,
+          title: 'Above 1 pushes dots harder into the shadows',
           get: () => d().gamma,
           set: (v) => s.updateLayerField(id, 'distribution', { gamma: v } as never),
         }),
-        slider({
-          label: 'Seed', min: 1, max: 9999, step: 1,
-          get: () => d().seed,
-          set: (v) => s.updateLayerField(id, 'distribution', { seed: v } as never),
-        }),
-        ...common(),
+        ...tail(true),
       ];
     }
 
@@ -325,13 +359,13 @@ export class Inspector {
     return [
       algoSelect,
       slider({
-        label: 'Lineature', min: 5, max: 200, step: 1, interaction: ia,
+        label: 'Lineature', min: 5, max: 200, step: 1, interaction: ia, unit: 'lpi', reset: 40,
         title: 'Lines per inch, relative to the canvas DPI',
         get: () => d().lineature,
         set: (v) => s.updateLayerField(id, 'distribution', { lineature: v } as never),
       }),
       slider({
-        label: 'Screen angle', min: -180, max: 180, step: 0.5, interaction: ia,
+        label: 'Screen angle', min: -180, max: 180, step: 0.5, interaction: ia, unit: '°', reset: 45,
         get: () => d().angle,
         set: (v) => s.updateLayerField(id, 'distribution', { angle: v } as never),
       }),
@@ -345,7 +379,8 @@ export class Inspector {
         get: () => d().lattice,
         set: (v) => s.updateLayerField(id, 'distribution', { lattice: v } as never),
       }),
-      ...common(),
+      // A halftone screen is deterministic, so there is no seed to offer.
+      ...tail(false),
     ];
   }
 
@@ -357,12 +392,12 @@ export class Inspector {
 
     const controls: Control[] = [
       select<'solid' | 'adaptive' | 'image' | 'multicolor'>({
-        label: 'Mode',
+        label: 'Colour mode',
         options: [
           { value: 'solid', label: 'Solid' },
-          { value: 'adaptive', label: 'Adaptive (hue ← tone)' },
-          { value: 'image', label: 'Sample image' },
-          { value: 'multicolor', label: 'Multicolour' },
+          { value: 'adaptive', label: 'Ramp (hue from tone)' },
+          { value: 'image', label: 'Sample the image' },
+          { value: 'multicolor', label: 'Random from palette' },
         ],
         get: () => L().color.mode,
         set: (v) => s.updateLayerField(id, 'color', { mode: v }),
@@ -371,7 +406,7 @@ export class Inspector {
 
     if (mode === 'solid') {
       controls.push(colorControl({
-        label: 'Colour', interaction: ia,
+        label: 'Ink', interaction: ia,
         get: () => L().color.color,
         set: (v) => s.updateLayerField(id, 'color', { color: v }),
       }));
@@ -380,12 +415,12 @@ export class Inspector {
     if (mode === 'adaptive') {
       controls.push(
         slider({
-          label: 'Hue (dark)', min: 0, max: 360, step: 1, interaction: ia,
+          label: 'Hue in darks', min: 0, max: 360, step: 1, interaction: ia, unit: '°',
           get: () => L().color.hueA,
           set: (v) => s.updateLayerField(id, 'color', { hueA: v }),
         }),
         slider({
-          label: 'Hue (light)', min: 0, max: 360, step: 1, interaction: ia,
+          label: 'Hue in lights', min: 0, max: 360, step: 1, interaction: ia, unit: '°',
           get: () => L().color.hueB,
           set: (v) => s.updateLayerField(id, 'color', { hueB: v }),
         }),
@@ -405,7 +440,7 @@ export class Inspector {
     if (mode === 'multicolor') {
       for (let i = 0; i < 3; i++) {
         controls.push(colorControl({
-          label: `Palette ${i + 1}`, interaction: ia,
+          label: `Ink ${i + 1}`, interaction: ia,
           get: () => L().color.palette[i] ?? [0, 0, 0, 1],
           set: (v) => {
             const palette = [...L().color.palette];
@@ -418,12 +453,14 @@ export class Inspector {
 
     controls.push(
       slider({
-        label: 'Opacity', min: 0, max: 1, step: 0.01, interaction: ia,
+        label: 'Ink opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+        title: 'Per-dot alpha, on top of the layer opacity',
         get: () => L().color.alpha,
         set: (v) => s.updateLayerField(id, 'color', { alpha: v }),
       }),
       slider({
-        label: 'Colour jitter', min: 0, max: 1, step: 0.01, interaction: ia,
+        label: 'Colour jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0,
+        title: 'Random value and alpha wobble per dot',
         get: () => L().color.jitter,
         set: (v) => s.updateLayerField(id, 'color', { jitter: v }),
       }),

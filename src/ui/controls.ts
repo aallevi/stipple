@@ -29,6 +29,55 @@ export type Interaction = {
   end(): void;
 };
 
+/** Wraps a bare element so it can sit in a `section` alongside real controls. */
+export function raw(el: HTMLElement): Control {
+  return { el, sync() {} };
+}
+
+export function hint(text: string): Control {
+  return raw(h('p', { class: 'hint' }, text));
+}
+
+/** A labelled divider inside a section, for grouping related controls. */
+export function group(title: string): Control {
+  return raw(h('div', { class: 'ctl-group' }, title));
+}
+
+/**
+ * Hold the engine in preview quality for the whole of a drag.
+ *
+ * `pointerup` alone is not enough: a drag that ends outside the window, or a
+ * keyboard nudge that never produces a pointer event, would leave the engine
+ * pinned to preview quality for the rest of the session.
+ */
+function bindDrag(el: HTMLElement, ia: Interaction | undefined): void {
+  if (!ia) return;
+  let active = false;
+  const begin = (): void => {
+    if (active) return;
+    active = true;
+    ia.begin();
+  };
+  const end = (): void => {
+    if (!active) return;
+    active = false;
+    ia.end();
+  };
+  el.addEventListener('pointerdown', begin);
+  el.addEventListener('keydown', begin);
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  el.addEventListener('keyup', end);
+  el.addEventListener('blur', end);
+  window.addEventListener('pointerup', end);
+}
+
+/** Paints the filled portion of a range track up to its current value. */
+function paintTrack(input: HTMLInputElement, min: number, max: number, v: number): void {
+  const t = max > min ? (v - min) / (max - min) : 0;
+  input.style.setProperty('--fill', `${Math.min(1, Math.max(0, t)) * 100}%`);
+}
+
 export function slider(opts: {
   label: string;
   min: number;
@@ -37,7 +86,10 @@ export function slider(opts: {
   get(): number;
   set(v: number): void;
   interaction?: Interaction;
-  format?(v: number): string;
+  /** Shown after the number field — "px", "°", "lpi". */
+  unit?: string;
+  /** Double-clicking the label snaps back to this. */
+  reset?: number;
   title?: string;
 }): Control {
   const input = h('input', {
@@ -47,37 +99,39 @@ export function slider(opts: {
     step: String(opts.step),
   }) as HTMLInputElement;
   const num = h('input', { type: 'number', class: 'num', step: String(opts.step) }) as HTMLInputElement;
-  const label = h('label', { class: 'ctl' },
-    h('span', { class: 'ctl-label', title: opts.title ?? opts.label }, opts.label),
-    input,
-    num,
-  );
+  const tip = opts.title ?? opts.label;
+  const name = h('span', { class: 'ctl-label', title: tip }, opts.label);
+  const field = h('div', { class: `ctl-num${opts.unit ? ' has-unit' : ''}` }, num);
+  if (opts.unit) field.append(h('span', { class: 'unit' }, opts.unit));
+
+  const row = h('div', { class: 'ctl' }, name, input, field);
 
   const push = (v: number): void => {
-    const clamped = Math.min(opts.max, Math.max(opts.min, v));
+    const clamped = Math.min(opts.max, Math.max(opts.min, Number.isFinite(v) ? v : opts.min));
     opts.set(clamped);
     input.value = String(clamped);
     num.value = fmt(clamped, opts.step);
+    paintTrack(input, opts.min, opts.max, clamped);
   };
 
   input.addEventListener('input', () => push(parseFloat(input.value)));
   num.addEventListener('change', () => push(parseFloat(num.value)));
 
-  // Dragging holds the engine in preview quality; releasing restores full.
-  if (opts.interaction) {
-    input.addEventListener('pointerdown', () => opts.interaction!.begin());
-    const end = (): void => opts.interaction!.end();
-    input.addEventListener('pointerup', end);
-    input.addEventListener('pointercancel', end);
-    input.addEventListener('blur', end);
+  if (opts.reset !== undefined) {
+    name.classList.add('resettable');
+    name.title = `${tip}\nDouble-click to reset`;
+    name.addEventListener('dblclick', () => push(opts.reset!));
   }
 
+  bindDrag(input, opts.interaction);
+
   return {
-    el: label,
+    el: row,
     sync() {
       const v = opts.get();
       input.value = String(v);
       num.value = fmt(v, opts.step);
+      paintTrack(input, opts.min, opts.max, v);
     },
   };
 }
@@ -92,23 +146,35 @@ export function select<T extends string>(opts: {
   options: { value: T; label: string }[];
   get(): T;
   set(v: T): void;
+  title?: string;
 }): Control {
   const sel = h('select') as HTMLSelectElement;
   for (const o of opts.options) sel.append(h('option', { value: o.value }, o.label));
   sel.addEventListener('change', () => opts.set(sel.value as T));
   return {
-    el: h('label', { class: 'ctl' }, h('span', { class: 'ctl-label' }, opts.label), sel),
+    el: h('div', { class: 'ctl ctl-select' },
+      h('span', { class: 'ctl-label', title: opts.title ?? opts.label }, opts.label),
+      h('div', { class: 'select-wrap' }, sel),
+    ),
     sync() {
       sel.value = opts.get();
     },
   };
 }
 
-export function toggle(opts: { label: string; get(): boolean; set(v: boolean): void }): Control {
-  const input = h('input', { type: 'checkbox' }) as HTMLInputElement;
+export function toggle(opts: {
+  label: string;
+  get(): boolean;
+  set(v: boolean): void;
+  title?: string;
+}): Control {
+  const input = h('input', { type: 'checkbox', class: 'switch-input' }) as HTMLInputElement;
   input.addEventListener('change', () => opts.set(input.checked));
   return {
-    el: h('label', { class: 'ctl ctl-toggle' }, input, h('span', {}, opts.label)),
+    el: h('label', { class: 'ctl ctl-toggle', title: opts.title ?? opts.label },
+      h('span', { class: 'ctl-label' }, opts.label),
+      h('span', { class: 'switch' }, input, h('span', { class: 'switch-track' })),
+    ),
     sync() {
       input.checked = opts.get();
     },
@@ -121,42 +187,64 @@ export function colorControl(opts: {
   set(v: [number, number, number, number]): void;
   interaction?: Interaction;
 }): Control {
-  const swatch = h('input', { type: 'color' }) as HTMLInputElement;
+  const swatch = h('input', { type: 'color', class: 'swatch' }) as HTMLInputElement;
   const alpha = h('input', { type: 'range', min: '0', max: '1', step: '0.01', class: 'alpha' }) as HTMLInputElement;
+  const readout = h('span', { class: 'readout' });
 
   const emit = (): void => {
     const [r, g, b] = hexToRGB(swatch.value);
-    opts.set([r, g, b, parseFloat(alpha.value)]);
+    const a = parseFloat(alpha.value);
+    opts.set([r, g, b, a]);
+    paintTrack(alpha, 0, 1, a);
+    readout.textContent = `${swatch.value.toUpperCase()} · ${Math.round(a * 100)}%`;
   };
   swatch.addEventListener('input', emit);
   alpha.addEventListener('input', emit);
-  if (opts.interaction) {
-    for (const el of [swatch, alpha]) {
-      el.addEventListener('pointerdown', () => opts.interaction!.begin());
-      el.addEventListener('pointerup', () => opts.interaction!.end());
-    }
-  }
+  bindDrag(swatch, opts.interaction);
+  bindDrag(alpha, opts.interaction);
 
   return {
-    el: h('label', { class: 'ctl' }, h('span', { class: 'ctl-label' }, opts.label), swatch, alpha),
+    el: h('div', { class: 'ctl ctl-color' },
+      h('span', { class: 'ctl-label', title: opts.label }, opts.label),
+      h('div', { class: 'color-pair' }, swatch, alpha),
+      readout,
+    ),
     sync() {
       const c = opts.get();
       swatch.value = rgbToHex(c[0], c[1], c[2]);
       alpha.value = String(c[3]);
+      paintTrack(alpha, 0, 1, c[3]);
+      readout.textContent = `${swatch.value.toUpperCase()} · ${Math.round(c[3] * 100)}%`;
     },
   };
 }
 
-/** A two-handle window over 0..1, used for tone ranges. */
+/**
+ * A two-handle window over 0..1, used for tone ranges.
+ *
+ * Both handles ride one track with the selected span highlighted, so the control
+ * reads as a window rather than as two unrelated sliders. The inputs are
+ * pointer-transparent except for their thumbs, which is what lets them overlap.
+ */
 export function rangeControl(opts: {
   label: string;
   get(): [number, number];
   set(v: [number, number]): void;
   interaction?: Interaction;
+  title?: string;
 }): Control {
-  const lo = h('input', { type: 'range', min: '0', max: '1', step: '0.01' }) as HTMLInputElement;
-  const hi = h('input', { type: 'range', min: '0', max: '1', step: '0.01' }) as HTMLInputElement;
+  const mk = (cls: string): HTMLInputElement =>
+    h('input', { type: 'range', min: '0', max: '1', step: '0.01', class: cls }) as HTMLInputElement;
+  const lo = mk('dual-lo');
+  const hi = mk('dual-hi');
+  const fill = h('span', { class: 'dual-fill' });
   const readout = h('span', { class: 'readout' });
+
+  const paint = (a: number, b: number): void => {
+    fill.style.left = `${a * 100}%`;
+    fill.style.right = `${(1 - b) * 100}%`;
+    readout.textContent = `${a.toFixed(2)} – ${b.toFixed(2)}`;
+  };
 
   const emit = (): void => {
     // Keep the handles ordered rather than letting them cross, which would
@@ -165,37 +253,44 @@ export function rangeControl(opts: {
     let b = parseFloat(hi.value);
     if (a > b) [a, b] = [b, a];
     opts.set([a, b]);
-    readout.textContent = `${a.toFixed(2)} – ${b.toFixed(2)}`;
+    paint(a, b);
   };
   lo.addEventListener('input', emit);
   hi.addEventListener('input', emit);
-  if (opts.interaction) {
-    for (const el of [lo, hi]) {
-      el.addEventListener('pointerdown', () => opts.interaction!.begin());
-      el.addEventListener('pointerup', () => opts.interaction!.end());
-    }
-  }
+  bindDrag(lo, opts.interaction);
+  bindDrag(hi, opts.interaction);
 
   return {
     el: h('div', { class: 'ctl ctl-range' },
-      h('span', { class: 'ctl-label' }, opts.label),
-      h('div', { class: 'range-pair' }, lo, hi),
+      h('span', { class: 'ctl-label', title: opts.title ?? opts.label }, opts.label),
+      h('div', { class: 'dual' }, h('span', { class: 'dual-track' }), fill, lo, hi),
       readout,
     ),
     sync() {
       const [a, b] = opts.get();
       lo.value = String(a);
       hi.value = String(b);
-      readout.textContent = `${a.toFixed(2)} – ${b.toFixed(2)}`;
+      paint(a, b);
     },
   };
 }
 
-export function section(title: string, controls: Control[], collapsed = false): Control {
+export function section(
+  title: string,
+  controls: Control[],
+  collapsed = false,
+  actions: HTMLElement[] = [],
+): Control {
   const body = h('div', { class: 'section-body' }, ...controls.map((c) => c.el));
-  const head = h('button', { class: 'section-head', type: 'button' }, title);
+  // The header is a row rather than one big button so it can carry its own
+  // actions — a button inside a button is not valid markup and swallows clicks.
+  const toggleBtn = h('button', { class: 'section-toggle', type: 'button' },
+    h('span', { class: 'chev' }), title);
+  const head = h('div', { class: 'section-head' }, toggleBtn);
+  if (actions.length) head.append(h('div', { class: 'section-actions' }, ...actions));
+
   const el = h('div', { class: `section${collapsed ? ' collapsed' : ''}` }, head, body);
-  head.addEventListener('click', () => el.classList.toggle('collapsed'));
+  toggleBtn.addEventListener('click', () => el.classList.toggle('collapsed'));
   return {
     el,
     sync() {
@@ -204,8 +299,9 @@ export function section(title: string, controls: Control[], collapsed = false): 
   };
 }
 
-export function button(label: string, onClick: () => void, cls = ''): HTMLButtonElement {
+export function button(label: string, onClick: () => void, cls = '', title?: string): HTMLButtonElement {
   const b = h('button', { class: `btn ${cls}`.trim(), type: 'button' }, label) as HTMLButtonElement;
+  if (title) b.title = title;
   b.addEventListener('click', onClick);
   return b;
 }

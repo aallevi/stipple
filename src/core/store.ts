@@ -1,4 +1,4 @@
-import type { Layer, Project } from './types';
+import type { Layer, Project, ShapeDef } from './types';
 import { defaultProject } from './defaults';
 
 /**
@@ -171,9 +171,28 @@ export class Store {
     this.schedule();
   }
 
-  updateShapes(shapes: Project['shapes']): void {
-    this.commit('shapes');
+  updateShapes(shapes: Project['shapes'], historyKey = 'shapes'): void {
+    this.commit(historyKey);
     this.project.shapes = shapes;
+    this.pending.shapes = true;
+    this.schedule();
+  }
+
+  /**
+   * Patch one shape definition in place.
+   *
+   * Shapes are project-scoped copies of the built-ins, so tuning a shape's
+   * geometry is an edit to this document rather than a global preference. The
+   * atlas re-rasterises only the tile whose definition actually changed, which
+   * is what makes dragging a segment-count slider cheap.
+   */
+  updateShape(id: string, patch: Partial<ShapeDef>): void {
+    const idx = this.project.shapes.findIndex((s) => s.id === id);
+    if (idx < 0) return;
+    this.commit(`shape:${id}:${Object.keys(patch).join(',')}`);
+    const next = [...this.project.shapes];
+    next[idx] = { ...next[idx], ...patch } as ShapeDef;
+    this.project.shapes = next;
     this.pending.shapes = true;
     this.schedule();
   }

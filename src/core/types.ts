@@ -45,7 +45,7 @@ export type ShapeDef =
       name: string;
       style: 'linear' | 'radial' | 'rounded';
       length: number;     // 0..1 relative to the shape cell
-      segments: number;   // 1..12
+      segments: number;   // 1..24
       thickness: number;  // 0..1
       warp: number;
       seed: number;
@@ -144,8 +144,8 @@ export type LayerMask = {
 };
 
 export type SizeParams = {
-  min: number;          // px, at the dark end
-  max: number;          // px, at the light end
+  min: number;          // px, at the light end of the tone range
+  max: number;          // px, at the dark end of the tone range
   /** 0 = every point is `max`, 1 = size fully tracks tone. */
   fromTone: number;
   /** Flip which end of the tone range gets the big points. */

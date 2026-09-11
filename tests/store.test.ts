@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultLayer, defaultProject } from '../src/core/defaults';
 import { Dirty, Store, type Change } from '../src/core/store';
+import type { ShapeDef } from '../src/core/types';
 
 // The store batches notifications on an animation frame; run them synchronously
 // so a test can assert on the change immediately after mutating.
@@ -117,6 +118,46 @@ describe('Store history', () => {
     expect(store.get().layers.map((l) => l.id)).toEqual([first, second.id]);
   });
 });
+
+describe('shape definitions', () => {
+  it('patches one shape and leaves the rest identical', () => {
+    const store = new Store(defaultProject());
+    const before = store.get().shapes;
+    const last = capture(store);
+
+    store.updateShape('burst', { segments: 16, thickness: 0.35 });
+
+    const after = store.get().shapes;
+    const burst = after.find((s) => s.id === 'burst') as Extract<ShapeDef, { kind: 'line' }>;
+    expect(burst.segments).toBe(16);
+    expect(burst.thickness).toBeCloseTo(0.35);
+    expect(last()!.shapes).toBe(true);
+    // Every other definition must be untouched by identity, since the atlas
+    // skips a rebuild only when the object it hashed is the same one.
+    for (const s of after) {
+      if (s.id !== 'burst') expect(s).toBe(before.find((b) => b.id === s.id));
+    }
+  });
+
+  it('leaves a shape edit undoable', () => {
+    const store = new Store(defaultProject());
+    store.updateShape('star', { innerRadius: 0.2 });
+    expect(shapeField(store, 'star', 'innerRadius')).toBeCloseTo(0.2);
+    store.undo();
+    expect(shapeField(store, 'star', 'innerRadius')).toBeCloseTo(0.45);
+  });
+
+  it('ignores a patch aimed at a shape that is not there', () => {
+    const store = new Store(defaultProject());
+    const before = store.get().shapes;
+    store.updateShape('nope', { segments: 4 } as never);
+    expect(store.get().shapes).toBe(before);
+  });
+});
+
+function shapeField(store: Store, id: string, field: string): number {
+  return (store.get().shapes.find((s) => s.id === id) as unknown as Record<string, number>)[field];
+}
 
 describe('project serialisation', () => {
   it('round-trips through JSON unchanged', () => {

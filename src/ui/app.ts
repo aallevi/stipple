@@ -9,7 +9,7 @@ import { testCard } from '../image/testcard';
 import { Engine } from '../pipeline/engine';
 import { decodeNative, openFile, saveFile, supportedImageExtensions } from '../platform';
 import { rasterBitmap } from '../shape/import';
-import { button, colorControl, h, slider, type Interaction } from './controls';
+import { button, colorControl, h, section, slider, type Control, type Interaction } from './controls';
 import { Inspector } from './inspector';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
@@ -33,6 +33,7 @@ export class App {
   private hud = h('div', { class: 'hud' });
   private toast = h('div', { class: 'toast' });
   private interaction: Interaction;
+  private document!: Control;
 
   constructor(root: HTMLElement) {
     this.engine = new Engine(this.canvas, this.store);
@@ -52,7 +53,12 @@ export class App {
       },
     };
 
-    this.layers = new LayersPanel(this.store, (id) => this.inspector.update(id));
+    this.layers = new LayersPanel(this.store, (id) => {
+      // Selecting a layer is not a store change, so the shape grid has to be
+      // told directly which of its tiles is now the current one.
+      this.shapes.setSelected(this.store.layer(id)?.shapeId);
+      this.inspector.update(id);
+    });
     this.shapes = new ShapesPanel(
       this.store,
       (id, bmp) => {
@@ -66,7 +72,7 @@ export class App {
     this.inspector = new Inspector(
       this.store,
       this.interaction,
-      () => this.store.get().shapes.map((s) => ({ value: s.id, label: s.name })),
+      this.shapes,
       this.engine.voronoiAvailable,
     );
 
@@ -78,7 +84,11 @@ export class App {
       this.engine.sync(project, change);
       if (change.structural) this.layers.render();
       if (change.shapes) this.shapes.render(this.selectedShapeId());
+      else this.shapes.setSelected(this.selectedShapeId());
       this.inspector.update(this.layers.selected);
+      // Undo, a preset and a freshly opened image all rewrite the canvas
+      // settings without going through those controls, so push the values back.
+      if (change.global) this.document.sync();
     });
 
     this.engine.setSource(testCard());
@@ -126,16 +136,7 @@ export class App {
   }
 
   private buildLayout(): HTMLElement {
-    const openBtn = button('Open image…', () => this.openImage(), 'primary');
-    const fitBtn = button('Fit', () => this.fitToWindow());
-    const oneToOne = button('100%', () => {
-      this.engine.setViewport({ zoom: 1, panX: 0, panY: 0 });
-      this.store.requestRedraw();
-    });
-    const undoBtn = button('Undo', () => this.store.undo());
-    const redoBtn = button('Redo', () => this.store.redo());
-
-    const presetSel = h('select', { class: 'preset-select' }) as HTMLSelectElement;
+    const presetSel = h('select', { class: 'preset-select', title: 'Load a starting point' }) as HTMLSelectElement;
     presetSel.append(h('option', { value: '' }, 'Presets…'));
     for (const p of PRESETS) presetSel.append(h('option', { value: p.name }, p.name));
     presetSel.addEventListener('change', () => {
@@ -153,17 +154,18 @@ export class App {
 
     const canvasControls = [
       slider({
-        label: 'Canvas W', min: 128, max: 8000, step: 1,
+        label: 'Width', min: 128, max: 8000, step: 1, unit: 'px',
         get: () => this.store.get().canvas.width,
         set: (v) => this.store.updateCanvas({ width: Math.round(v) }),
       }),
       slider({
-        label: 'Canvas H', min: 128, max: 8000, step: 1,
+        label: 'Height', min: 128, max: 8000, step: 1, unit: 'px',
         get: () => this.store.get().canvas.height,
         set: (v) => this.store.updateCanvas({ height: Math.round(v) }),
       }),
       slider({
-        label: 'DPI', min: 36, max: 1200, step: 1,
+        label: 'Resolution', min: 36, max: 1200, step: 1, unit: 'dpi',
+        title: 'Used by the PNG and PDF exporters, and by the halftone lineature',
         get: () => this.store.get().canvas.dpi,
         set: (v) => this.store.updateCanvas({ dpi: Math.round(v) }),
       }),
@@ -173,29 +175,48 @@ export class App {
         set: (v) => this.store.updateCanvas({ background: v }),
       }),
     ];
-    for (const c of canvasControls) c.sync();
+    this.document = section('Document', canvasControls, true);
+    this.document.sync();
 
+    // The toolbar reads left to right as the workflow does — bring an image in,
+    // frame it, step through history, start from a preset — with everything that
+    // sends work back out grouped together on the far right.
     return h('div', { class: 'app' },
       h('header', { class: 'toolbar' },
-        h('span', { class: 'brand' }, 'Stipple'),
-        openBtn, fitBtn, oneToOne, undoBtn, redoBtn, presetSel,
+        h('span', { class: 'brand' }, h('span', { class: 'brand-mark' }), 'Stipple'),
+        h('div', { class: 'tool-group' },
+          button('Open image…', () => void this.openImage(), 'primary', 'Open an image to stipple (⌘O)'),
+        ),
+        h('div', { class: 'tool-group' },
+          button('Fit', () => this.fitToWindow(), '', 'Fit the canvas to the window (0)'),
+          button('100%', () => {
+            this.engine.setViewport({ zoom: 1, panX: 0, panY: 0 });
+            this.store.requestRedraw();
+          }, '', 'View at one canvas pixel per screen pixel'),
+        ),
+        h('div', { class: 'tool-group' },
+          button('Undo', () => this.store.undo(), '', 'Undo (⌘Z)'),
+          button('Redo', () => this.store.redo(), '', 'Redo (⇧⌘Z)'),
+        ),
+        presetSel,
         h('span', { class: 'spacer' }),
-        button('Export PNG', () => this.doExport('png')),
-        button('Export SVG', () => this.doExport('svg')),
-        button('Export PDF', () => this.doExport('pdf')),
-        button('Save', () => this.saveProject()),
-        button('Load', () => this.loadProject()),
+        h('span', { class: 'tool-caption' }, 'Export'),
+        h('div', { class: 'tool-group' },
+          button('PNG', () => void this.doExport('png'), '', 'Export a raster image at the document resolution'),
+          button('SVG', () => void this.doExport('svg'), '', 'Export vector geometry'),
+          button('PDF', () => void this.doExport('pdf'), '', 'Export a print-ready vector PDF'),
+        ),
+        h('div', { class: 'tool-group' },
+          button('Save', () => void this.saveProject(), '', 'Save the project file'),
+          button('Load', () => void this.loadProject(), '', 'Open a saved project file'),
+        ),
       ),
       h('main', { class: 'main' },
         h('div', { class: 'stage' }, this.canvas, this.hud, this.toast),
         h('aside', { class: 'sidebar' },
           this.layers.el,
           this.inspector.el,
-          this.shapes.el,
-          h('div', { class: 'section' },
-            h('button', { class: 'section-head', type: 'button' }, 'Document'),
-            h('div', { class: 'section-body' }, ...canvasControls.map((c) => c.el)),
-          ),
+          this.document.el,
         ),
       ),
     );
@@ -233,7 +254,21 @@ export class App {
       e.preventDefault();
       const v = this.engine.getViewport();
       const factor = Math.exp(-e.deltaY * 0.0015);
-      this.engine.setViewport({ zoom: Math.min(8, Math.max(0.05, v.zoom * factor)) });
+      const zoom = Math.min(8, Math.max(0.05, v.zoom * factor));
+      // Zoom about the cursor. Anchoring to the canvas centre instead means the
+      // detail you were looking at slides off screen as you zoom into it, which
+      // is what makes a zoomed-in view impossible to relate to the whole image.
+      const { width, height } = this.store.get().canvas;
+      const rect = this.canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const px = (cx - v.panX - (rect.width - width * v.zoom) / 2) / v.zoom;
+      const py = (cy - v.panY - (rect.height - height * v.zoom) / 2) / v.zoom;
+      this.engine.setViewport({
+        zoom,
+        panX: cx - (rect.width - width * zoom) / 2 - px * zoom,
+        panY: cy - (rect.height - height * zoom) / 2 - py * zoom,
+      });
       this.store.requestRedraw();
     }, { passive: false });
 
@@ -393,15 +428,26 @@ export class App {
     requestAnimationFrame(this.loop);
   };
 
+  /**
+   * Discrete chips rather than one run-on string: the numbers change at very
+   * different rates, and separating them stops a jittering frame time from
+   * shifting the point count sideways every frame.
+   */
   private updateHUD(): void {
     const s = this.engine.stats;
     const avg = this.frameTimes.length
       ? this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length
       : 0;
-    this.hud.textContent =
-      `${s.points.toLocaleString()} pts · ${s.layers} layer${s.layers === 1 ? '' : 's'} · ` +
-      `gen ${s.generateMs.toFixed(1)}ms · draw ${s.renderMs.toFixed(1)}ms · ` +
-      `${avg.toFixed(1)}ms/update · ${Math.round(this.engine.getViewport().zoom * 100)}%`;
+    const chips: [string, string][] = [
+      ['points', s.points.toLocaleString()],
+      ['layers', String(s.layers)],
+      ['generate', `${s.generateMs.toFixed(1)} ms`],
+      ['draw', `${s.renderMs.toFixed(1)} ms`],
+      ['update', `${avg.toFixed(1)} ms`],
+      ['zoom', `${Math.round(this.engine.getViewport().zoom * 100)}%`],
+    ];
+    this.hud.replaceChildren(...chips.map(([k, v]) =>
+      h('span', { class: 'hud-chip' }, h('span', { class: 'hud-key' }, k), v)));
   }
 }
 

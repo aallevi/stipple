@@ -102,9 +102,18 @@ screen), pick a preset to see the shape of things, then work down the sidebar.
 | Weighted Voronoi | Evenly spaced, hand-stippled feel | Fine-art stipple, plotter output |
 | Halftone screen | Regular lattice, tone carried by dot size | Print separations, rosettes, line screens |
 
-**Shape** — which stamp, and how big. `Size ← tone` blends between a constant size and
-one fully driven by tone; `Follow contours` aligns each mark to the image's contours,
-which is what makes line shapes flow around forms.
+**Shape** — the library sits at the top of the section, so picking a stamp and tuning it
+is one movement. Whichever shape is selected exposes its own geometry below the grid: a
+line shape gives you `Arms`/`Segments`, `Length`, `Thickness` and `Waviness`, a polygon
+gives you `Sides`, `Inner radius` and `Irregularity`. Those edits belong to the document,
+and they are shared by every layer pointing at that shape — `Duplicate` forks it first if
+you want a six-armed burst and a sixteen-armed one in the same stack.
+
+**Size** — `Size in lights` and `Size in darks` are the two ends of the ramp, and
+`Tone influence` blends between a constant size and one fully driven by tone.
+
+**Rotation** — a fixed `Angle`, per-mark `Randomness`, and `Follow contours`, which
+aligns each mark to the image's contours and is what makes line shapes flow around forms.
 
 **Colour** — solid, adaptive (hue ramps with tone), sampled from the image, or a random
 palette pick per point.
@@ -215,6 +224,6 @@ src/
   gl/         context helpers, instanced point renderer, compositor
   pipeline/   engine — owns GPU resources and every cache
   export/     png (tiled), svg, pdf, and the shared shader mirror
-  ui/         panels, controls, presets
+  ui/         panels, controls, shape parameters, presets
 src-tauri/    desktop shell; Rust decodes TIFF, which web views cannot
 ```
