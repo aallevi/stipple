@@ -94,6 +94,18 @@ the desktop shell.
 Open an image (the app starts on a synthetic test card so there is always something on
 screen), pick a preset to see the shape of things, then work down the sidebar.
 
+### The layer stack
+
+The panel lists the stack the way every compositing tool does — topmost layer at the
+top — while the project stores it bottom-first, which is the order it renders in.
+
+Reorder it by dragging a row by its grip; a line shows where the layer will land, and
+it lands there in both directions. `⌘]` and `⌘[` (`Ctrl` on Windows) raise and lower
+the selected layer, and the `↑` `↓` buttons in the panel header do the same thing with
+the mouse. Order is not cosmetic here: a layer set to `Reads from → Layers below`
+samples the composite beneath it, so moving one changes what it draws, not just what
+covers what.
+
 ### How the controls relate
 
 Everything on the right-hand side is one chain. Knowing where a control sits in it
@@ -103,7 +115,7 @@ is usually enough to predict what it will do.
  SOURCE ──► Image adjust ──► Ink ──────► tone 0..1 ──┬──► Tone mask ──► keep / drop
             gamma, blur,     luma, or                │
             brightness,      coverage of             └──► Distribution ──► where the
-            contrast,        one ink                      spacing / lineature / count
+            contrast,        one ink                      density / lineature / count
             sharpen, invert                                        │
                                                                    ▼
                                             POINT (x, y, tone, gradient, random)
@@ -111,7 +123,7 @@ is usually enough to predict what it will do.
    ink = tone, flipped by "Swap light / dark"                      │
         │                                                          ▼
         ├─► Size      = Size × lerp(1 − Tone spread, 1, ink ^ Tone response)
-        │                     × (1 ± Size jitter)          ── in canvas px
+        │                     × (1 ± Size jitter)          ── a fraction of the picture
         ├─► Rotation  = Angle + random·Randomness + contour·Follow contours
         └─► Colour    = mode(tone, random) × (1 ± Colour jitter)
                         or, in Spot inks: nearest ink to the pixel,
@@ -128,13 +140,25 @@ is usually enough to predict what it will do.
                                             Blend mode + Layer opacity ──► the layer below
 ```
 
-Two rules fall out of that, and they are the ones worth remembering:
+Three rules fall out of that, and they are the ones worth remembering:
 
-**Shape parameters are fractions; `Size` is the only absolute.** `Length` is a
-fraction of the mark's cell and `Thickness` is a fraction of the mark's own length,
-so both are scale-free — a line keeps its proportions when you resize the layer, and
-thickening one grows it inward instead of pushing it out of its cell. The panel shows
-the pixels each fraction resolves to, so you never have to do that arithmetic.
+**Nothing is measured in pixels.** Every length a layer carries — `Size`, `Blur`,
+`Offset` — is stored as a fraction of the picture's short edge, and `Density` is a
+count of dots across it. So a document twice as wide is the same drawing at twice the
+size, a preset lands the same way on a snapshot and on a scan, and the sliders offer
+the same range of coarse-to-fine whatever resolution you opened. The panel writes all
+of it in millimetres, inches or per cent — pick which in Document — so you never have
+to think in fractions either.
+
+The one deliberate exception is the halftone `Lineature`, which is lines per inch of
+*paper*. A halftone screen is a physical object, so enlarging the document puts more
+cells across the image, exactly as enlarging the print would.
+
+**Shape parameters are fractions too.** `Length` is a fraction of the mark's cell and
+`Thickness` is a fraction of the mark's own length, so a line keeps its proportions
+when you resize the layer, and thickening one grows it inward instead of pushing it
+out of its cell. The panel shows the length each fraction resolves to, so you never
+have to do that arithmetic.
 
 **Size is a ramp, not a number.** `Size` sets the dark end; `Tone spread` says how
 much smaller the light end gets; `Tone response` is the curve between them. Leave the
@@ -149,6 +173,15 @@ grey down at about 68%.
 | Stochastic (jittered grid) | Blue-noise-ish, density from tone | The workhorse; instant at any density |
 | Weighted Voronoi | Evenly spaced, hand-stippled feel | Fine-art stipple, plotter output |
 | Halftone screen | Regular lattice, tone carried by dot size | Print separations, rosettes, line screens |
+
+`Density` is how many dots fit across the short edge of the picture, from eight to two
+thousand, on a slider spaced by ratio rather than by difference — so the fine end is
+as adjustable as the coarse one instead of being crushed into the last few pixels of
+the track. The Voronoi `Dot count` works the same way and runs to a million. Neither
+is bounded by the document's resolution: the output is vector, so there is no pixel
+grid for a screen to be too fine for, and the only ceiling is the four-million-point
+budget each layer gets. The readout under the slider says what you are actually
+getting — the spacing in millimetres, and the grid it comes to.
 
 **Shape** — the library sits at the top of the section, so picking a stamp and tuning it
 is one movement. Whichever shape is selected exposes its own geometry below the grid: a
@@ -298,7 +331,7 @@ declares how much it invalidates, derived from which fields it touches:
 | Edit | Invalidates |
 |---|---|
 | colour, size, rotation, opacity, blend, shape | the draw only |
-| spacing, algorithm, tone mask | that layer's points |
+| density, algorithm, tone mask | that layer's points |
 | prefilter, input source | that layer's density map, then its points |
 | source image, canvas size | everything |
 

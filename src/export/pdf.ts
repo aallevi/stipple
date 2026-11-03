@@ -1,6 +1,7 @@
 import type { Project } from '../core/types';
 import { POINT_STRIDE } from '../dist/types';
 import type { Engine } from '../pipeline/engine';
+import { resolvedLayers } from '../core/scale';
 import { evaluatePoint, inkSetFor, shapeGeometry, type ShapeGeometry } from './geometry';
 
 /**
@@ -63,7 +64,8 @@ export function exportPDF(engine: Engine, project: Project): PDFResult {
   content.push(`${f(background[0])} ${f(background[1])} ${f(background[2])} rg`);
   content.push(`0 0 ${f(pw)} ${f(ph)} re f`);
 
-  for (const layer of project.layers) {
+  // Lengths are stored relative to the document; resolve the whole stack once.
+  for (const layer of resolvedLayers(project)) {
     if (!layer.visible || layer.opacity <= 0) continue;
     const points = engine.pointsFor(layer.id);
     const def = project.shapes.find((s) => s.id === layer.shapeId);

@@ -1,7 +1,8 @@
 import type {
-  ColorParams, DistributionAlgo, DistributionParams, Layer, LayerMask,
+  ColorParams, DistributionAlgo, DistributionParams, JitteredParams, Layer, LayerMask,
   Prefilter, Project, RotationParams, ShapeDef, SizeParams, Transform,
 } from './types';
+import { unitPx } from './scale';
 
 let idCounter = 0;
 export function uid(prefix = 'id'): string {
@@ -36,7 +37,10 @@ export function defaultMask(): LayerMask {
 }
 
 export function defaultSize(): SizeParams {
-  return { min: 0.6, max: 4, fromTone: 1, gamma: 1, invert: false, jitter: 0 };
+  // Fractions of the short edge: 0.4 % and 0.06 % of the picture, which is the
+  // 4 px and 0.6 px these used to be on the 1024 px document they were dialled
+  // in on, and now the same mark on any document.
+  return { min: 0.0006, max: 0.004, fromTone: 1, gamma: 1, invert: false, jitter: 0 };
 }
 
 export function defaultRotation(): RotationParams {
@@ -65,7 +69,7 @@ export function defaultDistribution(algo: DistributionAlgo): DistributionParams 
   switch (algo) {
     case 'jittered':
       return {
-        algo: 'jittered', spacing: 4, phases: 12, jitter: 0.85,
+        algo: 'jittered', density: 256, phases: 12, jitter: 0.85,
         overpaint: 0, toneRange: [0, 1], invertDensity: false, seed: 1,
       };
     case 'voronoi':
@@ -123,12 +127,48 @@ export function normaliseProject(project: Project): Project {
     }
     if (layer.prefilter && layer.prefilter.channel === undefined) layer.prefilter.channel = 'luma';
   }
+  if ((project.version ?? 1) < 2) toRelativeLengths(project);
+  project.version = 2;
   return project;
+}
+
+/**
+ * Version 1 → 2: canvas pixels become fractions of the short edge.
+ *
+ * This cannot be done field by field at the point of use, the way the additions
+ * above are, because there is nothing about the number `4` that says whether it
+ * means four pixels or four times the width of the picture. The version is the
+ * only thing that distinguishes them, so the conversion has to happen exactly
+ * once, on the way in, for the whole file.
+ *
+ * The divisor is the short edge the file was *saved* with, so a project reopens
+ * looking exactly as it was left; every later resize then carries it along.
+ */
+function toRelativeLengths(project: Project): void {
+  const unit = unitPx(project.canvas ?? { width: 1024, height: 1024 } as Project['canvas']);
+  for (const layer of project.layers ?? []) {
+    if (layer.size) {
+      layer.size.min /= unit;
+      layer.size.max /= unit;
+    }
+    if (layer.prefilter) layer.prefilter.blur /= unit;
+    if (layer.transform) {
+      layer.transform.offsetX /= unit;
+      layer.transform.offsetY /= unit;
+    }
+    // A stochastic screen also flips from a spacing to a dot count, which is the
+    // same reciprocal the generator would have applied anyway.
+    const d = layer.distribution as JitteredParams & { spacing?: number };
+    if (d?.algo === 'jittered' && typeof d.spacing === 'number') {
+      d.density = unit / Math.max(0.5, d.spacing);
+      delete d.spacing;
+    }
+  }
 }
 
 export function defaultProject(width = 1024, height = 1024): Project {
   return {
-    version: 1,
+    version: 2,
     canvas: { width, height, dpi: 300, background: [1, 1, 1, 1], units: 'mm' },
     shapes: BUILTIN_SHAPES.map((s) => ({ ...s })),
     layers: [defaultLayer('Stipple 1')],

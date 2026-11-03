@@ -117,7 +117,7 @@ const dirty = await page.evaluate(async () => {
   engine.render(true);
   const afterColor = { ...engine.stats };
 
-  store.updateLayerField(id, 'distribution', { spacing: 9 });
+  store.updateLayerField(id, 'distribution', { density: 114 });
   await new Promise((r) => requestAnimationFrame(r));
   engine.render(true);
   const afterSpacing = { ...engine.stats };
@@ -129,7 +129,7 @@ check(
   `regenerated ${dirty.afterColor.regenerated} layers, gen ${dirty.afterColor.generateMs.toFixed(2)}ms`,
 );
 check(
-  'spacing edit does regenerate',
+  'density edit does regenerate',
   dirty.afterSpacing.regenerated === 1 && dirty.afterSpacing.points !== dirty.before.points,
   `${dirty.before.points.toLocaleString()} → ${dirty.afterSpacing.points.toLocaleString()} points`,
 );
@@ -190,7 +190,9 @@ const imported = await page.evaluate(async ({ svgSource, rasterBytes }) => {
   const id = store.get().layers[0].id;
   const render = async (shapeId) => {
     store.updateLayer(id, { shapeId });
-    store.updateLayerField(id, 'size', { min: 6, max: 18 });
+    // Fractions of the short edge, not pixels: a big enough stamp to judge the
+    // imported artwork by, on whatever size document the check is run at.
+    store.updateLayerField(id, 'size', { min: 0.006, max: 0.018 });
     await new Promise((r) => setTimeout(r, 400));
     engine.render(true);
     const { width, height } = store.get().canvas;
@@ -304,7 +306,7 @@ const perf = await page.evaluate(async () => {
   setAutoRender(false);
   const id = store.get().layers[0].id;
 
-  store.updateLayerField(id, 'distribution', { spacing: 1.4, phases: 32 });
+  store.updateLayerField(id, 'distribution', { density: 730, phases: 32 });
   await new Promise((r) => requestAnimationFrame(r));
   const t0 = performance.now();
   engine.render(true);
@@ -317,7 +319,7 @@ const perf = await page.evaluate(async () => {
   let regenerations = 0;
   let generationMs = 0;
   for (let i = 0; i < 10; i++) {
-    store.updateLayerField(id, 'size', { max: 2 + i * 0.05 });
+    store.updateLayerField(id, 'size', { max: 0.002 + i * 0.00005 });
     store.updateLayerField(id, 'color', { alpha: 0.5 + i * 0.04 });
     store.updateLayerField(id, 'rotation', { random: i / 10 });
     await new Promise((r) => requestAnimationFrame(r));
@@ -423,6 +425,48 @@ check('PNG carries one pixel per canvas pixel, so it lands at the document dpi',
   `${sizes.pngW}×${sizes.pngH} px = ${(sizes.pngW / sizes.dpi).toFixed(2)}×${(sizes.pngH / sizes.dpi).toFixed(2)} in at ${sizes.dpi} dpi`);
 
 // ---------------------------------------------------------------------------
+// One project, one drawing, at any document size.
+//
+// Layer lengths are fractions of the short edge and the stochastic screen's
+// density is a count across it (`src/core/scale.ts`), so resizing the document
+// must enlarge the drawing bodily and change nothing about it. Before that, the
+// same settings put four times as many dots, each a quarter the relative size,
+// into a document twice as wide — so nothing you tuned on one image survived
+// being opened at another size, and the coarsest mark a big document could
+// reach was a hairline.
+//
+// Checked through the SVG rather than the preview, because vector output has no
+// pixel grid of its own to hide behind: if the two files differ by anything but
+// a uniform scale factor, the drawing changed.
+// ---------------------------------------------------------------------------
+const atSize = (edge) => page.evaluate(async (edge) => {
+  const { store } = window.__stipple;
+  store.updateCanvas({ width: edge, height: edge });
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const svg = await window.__stipple.exportSVG();
+  const scales = [...svg.matchAll(/scale\(([\d.]+)\)/g)].map((m) => Number(m[1]));
+  return {
+    edge,
+    uses: (svg.match(/<use /g) ?? []).length,
+    // Mark size as a fraction of the picture, which is the quantity that has to
+    // hold. In canvas pixels it legitimately doubles when the document does.
+    relSize: scales.length ? scales.reduce((a, b) => a + b, 0) / scales.length / edge : 0,
+  };
+}, edge);
+
+await page.evaluate((n) => window.__stipple.applyPreset(n), 'Classic stipple');
+await page.waitForTimeout(600);
+const small = await atSize(800);
+const large = await atSize(2400);
+
+check('a document three times the size draws the same number of marks',
+  Math.abs(large.uses - small.uses) <= Math.max(2, small.uses * 0.02),
+  `${small.uses.toLocaleString()} at 800px vs ${large.uses.toLocaleString()} at 2400px`);
+check('and each mark is the same fraction of the picture',
+  small.relSize > 0 && Math.abs(large.relSize - small.relSize) / small.relSize < 0.02,
+  `${(small.relSize * 100).toFixed(3)}% vs ${(large.relSize * 100).toFixed(3)}% of the short edge`);
+
+// ---------------------------------------------------------------------------
 // Spot inks and plate separation.
 //
 // The whole feature is a *classification* — which of N screens each dot is
@@ -438,7 +482,7 @@ const setSpot = (mixing) => page.evaluate(({ PALETTE, mixing }) => {
   const id = store.get().layers[0].id;
   store.updateLayerField(id, 'color', { mode: 'spot', palette: PALETTE, paper: [1, 1, 1, 1], mixing });
   store.updateLayerField(id, 'prefilter', { channel: 'flat' });
-  store.updateLayerField(id, 'size', { fromTone: 0, max: 3 });
+  store.updateLayerField(id, 'size', { fromTone: 0, max: 0.005 });
 }, { PALETTE, mixing });
 
 await setSpot(1);

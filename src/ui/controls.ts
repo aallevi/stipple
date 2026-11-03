@@ -111,6 +111,16 @@ function paintTrack(input: HTMLInputElement, min: number, max: number, v: number
   input.style.setProperty('--fill', `${Math.min(1, Math.max(0, t)) * 100}%`);
 }
 
+/**
+ * Track positions a logarithmic slider is divided into.
+ *
+ * The range input has to carry integers for the browser to step cleanly, so a
+ * log control maps its value onto this many notches and back. A thousand is
+ * finer than the track is wide on any screen, which is the only thing that
+ * matters — the number field is how you type an exact value.
+ */
+const LOG_NOTCHES = 1000;
+
 export function slider(opts: {
   label: string;
   min: number;
@@ -124,12 +134,33 @@ export function slider(opts: {
   /** Double-clicking the label snaps back to this. */
   reset?: number;
   title?: string;
+  /**
+   * `log` spaces the track by ratio rather than by difference.
+   *
+   * For a quantity that spans decades — a dot count from a dozen to a couple of
+   * thousand — a linear track spends nine tenths of its length in the range you
+   * never want and gives the useful end two pixels. On a log track every part of
+   * it moves the value by the same *proportion*, so the fine end is as
+   * adjustable as the coarse one. Ignored unless `min` is above zero.
+   */
+  curve?: 'linear' | 'log';
 }): Control {
+  const log = opts.curve === 'log' && opts.min > 0 && opts.max > opts.min;
+  const ratio = log ? Math.log(opts.max / opts.min) : 0;
+  const toPos = (v: number): number =>
+    log ? Math.round((Math.log(Math.max(opts.min, v) / opts.min) / ratio) * LOG_NOTCHES) : v;
+  const fromPos = (t: number): number => {
+    if (!log) return t;
+    const v = opts.min * Math.exp((t / LOG_NOTCHES) * ratio);
+    // Snap to the caller's step so a dot count stays a whole number of dots.
+    return opts.step > 0 ? Math.round(v / opts.step) * opts.step : v;
+  };
+
   const input = h('input', {
     type: 'range',
-    min: String(opts.min),
-    max: String(opts.max),
-    step: String(opts.step),
+    min: String(log ? 0 : opts.min),
+    max: String(log ? LOG_NOTCHES : opts.max),
+    step: String(log ? 1 : opts.step),
   }) as HTMLInputElement;
   const num = h('input', { type: 'number', class: 'num', step: String(opts.step) }) as HTMLInputElement;
   const tip = opts.title ?? opts.label;
@@ -139,15 +170,19 @@ export function slider(opts: {
 
   const row = h('div', { class: 'ctl' }, name, input, field);
 
+  const show = (v: number): void => {
+    input.value = String(toPos(v));
+    num.value = fmt(v, opts.step);
+    paintTrack(input, log ? 0 : opts.min, log ? LOG_NOTCHES : opts.max, toPos(v));
+  };
+
   const push = (v: number): void => {
     const clamped = Math.min(opts.max, Math.max(opts.min, Number.isFinite(v) ? v : opts.min));
     opts.set(clamped);
-    input.value = String(clamped);
-    num.value = fmt(clamped, opts.step);
-    paintTrack(input, opts.min, opts.max, clamped);
+    show(clamped);
   };
 
-  input.addEventListener('input', () => push(parseFloat(input.value)));
+  input.addEventListener('input', () => push(fromPos(parseFloat(input.value))));
   num.addEventListener('change', () => push(parseFloat(num.value)));
 
   if (opts.reset !== undefined) {
@@ -161,10 +196,7 @@ export function slider(opts: {
   return {
     el: row,
     sync() {
-      const v = opts.get();
-      input.value = String(v);
-      num.value = fmt(v, opts.step);
-      paintTrack(input, opts.min, opts.max, v);
+      show(opts.get());
     },
   };
 }

@@ -81,8 +81,16 @@ export type ShapeKind = ShapeDef['kind'];
 
 export type JitteredParams = {
   algo: 'jittered';
-  /** Distance between candidate sites, in canvas px. Lower = more points. */
-  spacing: number;
+  /**
+   * Candidate sites across the short edge of the document. Higher = more dots.
+   *
+   * A count rather than a spacing, and relative to the picture rather than to
+   * the canvas pixel grid, because that is the quantity that survives a change
+   * of document size: "eight hundred dots across" is the same drawing on a
+   * thumbnail and on a poster, where "four pixels apart" is two different ones.
+   * `GenContext.unit` turns it back into a spacing at generation time.
+   */
+  density: number;
   /** Number of discrete brightness bands. Higher = smoother tonal fidelity. */
   phases: number;
   /** 0 = perfect grid, 1 = fully random within the cell. */
@@ -98,7 +106,10 @@ export type JitteredParams = {
 
 export type VoronoiParams = {
   algo: 'voronoi';
-  /** Initial site count, refined by Lloyd relaxation. */
+  /**
+   * Initial site count, refined by Lloyd relaxation. Already scale-free — a
+   * count of dots is a count of dots whatever size the document is.
+   */
   points: number;
   /** Relaxation iterations. ~20 is visually converged for most images. */
   iterations: number;
@@ -111,7 +122,15 @@ export type VoronoiParams = {
 
 export type HalftoneParams = {
   algo: 'halftone';
-  /** Lines per inch of the screen. */
+  /**
+   * Lines per inch of the screen.
+   *
+   * The one distribution parameter that is deliberately *not* relative to the
+   * picture. A halftone screen is a physical object — 45 lpi is 45 lines to the
+   * inch of paper — so it is pinned to the document's dpi, and enlarging the
+   * document puts more cells across the image exactly as enlarging a print
+   * would. The panel writes the relative reading beside it.
+   */
   lineature: number;
   /** Screen rotation in degrees. */
   angle: number;
@@ -132,7 +151,8 @@ export type Prefilter = {
   brightness: number; // -1..1
   contrast: number;   // -1..1
   gamma: number;      // 0.1..4
-  blur: number;       // px
+  /** Radius as a fraction of the canvas short edge — see `core/scale.ts`. */
+  blur: number;
   sharpen: number;    // 0..1
   invert: boolean;
   /**
@@ -169,8 +189,13 @@ export type LayerMask = {
 };
 
 export type SizeParams = {
-  min: number;          // px, at the light end of the tone range
-  max: number;          // px, at the dark end of the tone range
+  /**
+   * The mark at each end of the tone range, as a fraction of the canvas short
+   * edge — see `core/scale.ts`. Relative rather than in pixels so a stipple
+   * keeps its proportions when the document is resized.
+   */
+  min: number;          // at the light end of the tone range
+  max: number;          // at the dark end of the tone range
   /** 0 = every point is `max`, 1 = size fully tracks tone. */
   fromTone: number;
   /**
@@ -237,6 +262,7 @@ export type ColorParams = {
 export type Transform = {
   scale: number;
   rotate: number;   // degrees
+  /** Fractions of the canvas short edge — see `core/scale.ts`. */
   offsetX: number;
   offsetY: number;
   flipX: boolean;
@@ -280,8 +306,15 @@ export type CanvasSettings = {
   units: 'mm' | 'in' | '%' | 'px';
 };
 
+/**
+ * `2` moved every layer length from canvas pixels to fractions of the short
+ * edge, and the stochastic screen from a spacing to a dot count. Version `1`
+ * files are converted on load by `normaliseProject`.
+ */
+export type ProjectVersion = 1 | 2;
+
 export type Project = {
-  version: 1;
+  version: ProjectVersion;
   canvas: CanvasSettings;
   shapes: ShapeDef[];
   layers: Layer[];   // index 0 renders first (bottom)

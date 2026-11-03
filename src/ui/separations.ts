@@ -1,4 +1,5 @@
 import { defaultLayer } from '../core/defaults';
+import { unitPx } from '../core/scale';
 import type { Layer, Project, RGBA } from '../core/types';
 
 /**
@@ -129,6 +130,14 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
   // A circle inscribed in its cell covers only 79% of it, so a halftone dot has
   // to overfill the cell to reach solid; corner to corner is sqrt(2) across.
   const cell = canvas.dpi / lineature;
+  // Layer lengths are fractions of the short edge (`core/scale.ts`), and the
+  // screen is a physical 45 lpi, so the two meet here: the cell is worked out in
+  // paper terms and then written down as the proportion of *this* document it
+  // comes to. A stochastic plate is ruled to match, so the two kinds of
+  // separation land at comparable fineness instead of one being tuned by eye.
+  const unit = unitPx(canvas);
+  const inCell = (fraction: number): number => (cell * fraction) / unit;
+  const cellsAcross = Math.round(unit / cell);
 
   return kind.inks.map((ink, i) => {
     const layer = defaultLayer(ink.name, kind.screen === 'halftone' ? 'halftone' : 'jittered');
@@ -151,15 +160,20 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
       };
       // gamma 0.5 makes ink *area* track coverage, which is the whole point of a
       // halftone: with a linear ramp a 50% grey prints at about 68%.
-      layer.size = { ...layer.size, min: 0, max: cell * Math.SQRT2, fromTone: 1, gamma: 0.5, jitter: 0 };
+      layer.size = { ...layer.size, min: 0, max: inCell(Math.SQRT2), fromTone: 1, gamma: 0.5, jitter: 0 };
     } else {
       layer.distribution = {
         ...layer.distribution,
+        // One candidate site per screen cell, so a stipple plate resolves the
+        // same detail its halftone counterpart would.
+        density: cellsAcross,
         // Offsetting the seed per plate keeps two stochastic screens from
         // landing their dots in the same places and clumping.
         seed: 1 + i * 137,
       } as Layer['distribution'];
-      layer.size = { ...layer.size, min: 0, max: 3.2, fromTone: 1, gamma: 0.5, jitter: 0.15 };
+      // Just under half a cell: dense enough to reach solid in the shadows once
+      // the dots overlap, open enough that the paper still shows in the lights.
+      layer.size = { ...layer.size, min: 0, max: inCell(0.48), fromTone: 1, gamma: 0.5, jitter: 0.15 };
       layer.rotation = { ...layer.rotation, random: 1 };
     }
     return layer;

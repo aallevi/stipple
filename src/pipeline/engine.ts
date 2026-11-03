@@ -1,3 +1,4 @@
+import { resolveLayer, unitPx } from '../core/scale';
 import { Dirty, type Change, type Store } from '../core/store';
 import type { Layer, Project } from '../core/types';
 import { generateHalftone } from '../dist/halftone';
@@ -29,7 +30,7 @@ type LayerCache = {
   pointsKey: string;
 };
 
-/** Hard ceiling per layer so a mistyped spacing cannot allocate unbounded memory. */
+/** Hard ceiling per layer so a mistyped density cannot allocate unbounded memory. */
 const MAX_POINTS_PER_LAYER = 4_000_000;
 /** Largest internal render target edge; above this, memory cost outweighs detail. */
 const MAX_RENDER_EDGE = 4096;
@@ -261,8 +262,13 @@ export class Engine {
     let regenerated = 0;
     let totalPoints = 0;
 
-    for (const layer of project.layers) {
-      if (!layer.visible || layer.opacity <= 0) continue;
+    // Layer lengths are stored relative to the document (see `core/scale.ts`);
+    // this is the conversion, and everything below it works in canvas pixels.
+    const unit = unitPx(project.canvas);
+
+    for (const raw of project.layers) {
+      if (!raw.visible || raw.opacity <= 0) continue;
+      const layer = resolveLayer(raw, unit);
       const cache = this.cacheFor(layer.id);
 
       // A `below` layer reads the composite underneath it, so its density has to
@@ -287,7 +293,7 @@ export class Engine {
       const pKey = this.pointsKeyFor(layer, project.canvas.width, project.canvas.height, quality);
       if (cache.pointsKey !== pKey || !cache.points) {
         const g0 = performance.now();
-        cache.points = this.generate(layer, cache.density!, project, quality);
+        cache.points = this.generate(layer, cache.density!, project, quality, unit);
         cache.batch.upload(cache.points.data, cache.points.count);
         cache.pointsKey = pKey;
         genMs += performance.now() - g0;
@@ -352,11 +358,18 @@ export class Engine {
     return this.finalTexture;
   }
 
-  private generate(layer: Layer, density: DensityMap, project: Project, quality: number): PointBuffer {
+  private generate(
+    layer: Layer,
+    density: DensityMap,
+    project: Project,
+    quality: number,
+    unit: number,
+  ): PointBuffer {
     const ctx: GenContext = {
       density,
       width: project.canvas.width,
       height: project.canvas.height,
+      unit,
       mask: layer.mask,
       quality,
       maxPoints: MAX_POINTS_PER_LAYER,
@@ -492,6 +505,8 @@ export class Engine {
     const { gl } = this;
     const project = this.store.get();
 
+    const unit = unitPx(project.canvas);
+
     const a = new RenderTarget(gl, tileW, tileH);
     const b = new RenderTarget(gl, tileW, tileH);
     const layerTarget = new RenderTarget(gl, tileW, tileH);
@@ -500,10 +515,11 @@ export class Engine {
       let base = a;
       let other = b;
 
-      for (const layer of project.layers) {
-        if (!layer.visible || layer.opacity <= 0) continue;
-        const cache = this.caches.get(layer.id);
+      for (const raw of project.layers) {
+        if (!raw.visible || raw.opacity <= 0) continue;
+        const cache = this.caches.get(raw.id);
         if (!cache?.points) continue;
+        const layer = resolveLayer(raw, unit);
 
         const slot = this.atlas.get(layer.shapeId) ?? this.atlas.get('circle');
         if (!slot) continue;

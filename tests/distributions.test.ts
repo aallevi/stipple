@@ -27,6 +27,9 @@ function ctx(density: DensityMap, quality = 1): GenContext {
     density,
     width: density.width,
     height: density.height,
+    // These fixtures use the density map as the canvas, so the document unit is
+    // its short edge — the same thing `unitPx` would return for a real project.
+    unit: Math.min(density.width, density.height),
     mask: defaultMask(),
     quality,
     maxPoints: 1_000_000,

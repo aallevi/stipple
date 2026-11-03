@@ -1,5 +1,6 @@
 import { buildInkSet, extractPalette, inkShares, toneRamp } from '../core/color';
 import { defaultDistribution, defaultRotation, defaultSize } from '../core/defaults';
+import { unitPx } from '../core/scale';
 import type { Store } from '../core/store';
 import {
   BLEND_MODES, type BlendMode, type DistributionAlgo, type HalftoneParams,
@@ -12,7 +13,19 @@ import {
 import { inkName } from '../export/plates';
 import { INK_SETS } from './separations';
 import { shapeParamControls } from './shapeparams';
-import { formatLength, lengthSlider } from './units';
+import { formatSpan, lengthSlider } from './units';
+
+/**
+ * The stochastic screen's range, in dots across the short edge of the picture.
+ *
+ * The top is where the point budget runs out rather than a taste judgement: a
+ * square document at 2,000 across is four million candidate sites, which is the
+ * per-layer ceiling in `pipeline/engine.ts`. The bottom is coarse enough to
+ * count the marks. Neither end has anything to do with how many pixels the
+ * document happens to be, which is the point.
+ */
+const MIN_DENSITY = 8;
+const MAX_DENSITY = 2000;
 
 /**
  * Parameter panel for the selected layer.
@@ -61,12 +74,14 @@ export class Inspector {
     // slider rebuilt the section on its first step and threw away the slider the
     // pointer was holding — the control could not be moved past one notch.
     // Those now hide and show themselves through `when`.
-    // The unit and the resolution both decide the range and step a length slider
-    // is built with, so a change to either has to remake those controls.
+    // Every length slider is built against one unit, one resolution and one
+    // document size — lengths are stored as fractions of the short edge, so the
+    // document's dimensions are part of the conversion whatever unit is on
+    // display, not only for `%`. All three go in the key.
     const canvas = this.store.get().canvas;
     const key = [layer.id, layer.distribution.algo, layer.color.mode, layer.shapeId,
       shapeForm, layer.prefilter.channel ?? 'luma', canvas.units, canvas.dpi,
-      canvas.units === '%' ? `${canvas.width}x${canvas.height}` : ''].join(':');
+      `${canvas.width}x${canvas.height}`].join(':');
     if (key !== this.builtFor) {
       this.build(layer);
       this.builtFor = key;
@@ -118,7 +133,10 @@ export class Inspector {
 
       section('Size', [
         lengthSlider({
-          label: 'Size', minPx: 0, maxPx: 60, interaction: ia,
+          // A range in fractions of the picture, not in pixels: 0 to a twelfth
+          // of the short edge is a hairline to a mark you could count from
+          // across the room, and it is that on any document.
+          label: 'Size', min: 0, max: 0.08, interaction: ia,
           canvas: this.store.get().canvas, reset: size.max,
           title: 'The overall mark size — what a dot in the shadows measures across',
           get: () => L().size.max,
@@ -143,7 +161,7 @@ export class Inspector {
           const c = this.store.get().canvas;
           const lo = lightEndSize(l);
           const [a, b] = l.size.invert ? ['darks', 'lights'] : ['lights', 'darks'];
-          return `${a} ${formatLength(lo, c)} → ${b} ${formatLength(l.size.max, c)}`;
+          return `${a} ${formatSpan(lo, c)} → ${b} ${formatSpan(l.size.max, c)}`;
         }),
         slider({
           label: 'Tone response', min: 0.3, max: 2, step: 0.05, interaction: ia, reset: 1,
@@ -263,8 +281,10 @@ export class Inspector {
           set: (v) => s.updateLayerField(id, 'prefilter', { gamma: v }),
         }),
         lengthSlider({
-          label: 'Blur', minPx: 0, maxPx: 20, interaction: ia, reset: 0,
+          label: 'Blur', min: 0, max: 0.1, interaction: ia, reset: 0,
           canvas: this.store.get().canvas,
+          title: 'Softens what this layer measures, as a fraction of the picture — '
+            + 'so a blur that turns the dots below into tone keeps doing that at any size',
           get: () => L().prefilter.blur,
           set: (v) => s.updateLayerField(id, 'prefilter', { blur: v }),
         }),
@@ -291,13 +311,18 @@ export class Inspector {
           get: () => L().transform.rotate,
           set: (v) => s.updateLayerField(id, 'transform', { rotate: v }),
         }),
-        slider({
-          label: 'Offset X', min: -1000, max: 1000, step: 1, interaction: ia, unit: 'px', reset: 0,
+        // Half the picture each way, whatever size the picture is — a nudge
+        // that shifted a layer by a quarter of a small document used to shift it
+        // by a twentieth of a big one.
+        lengthSlider({
+          label: 'Offset X', min: -0.5, max: 0.5, interaction: ia, reset: 0,
+          canvas: this.store.get().canvas,
           get: () => L().transform.offsetX,
           set: (v) => s.updateLayerField(id, 'transform', { offsetX: v }),
         }),
-        slider({
-          label: 'Offset Y', min: -1000, max: 1000, step: 1, interaction: ia, unit: 'px', reset: 0,
+        lengthSlider({
+          label: 'Offset Y', min: -0.5, max: 0.5, interaction: ia, reset: 0,
+          canvas: this.store.get().canvas,
           get: () => L().transform.offsetY,
           set: (v) => s.updateLayerField(id, 'transform', { offsetY: v }),
         }),
@@ -370,12 +395,26 @@ export class Inspector {
       const d = (): JitteredParams => L().distribution as JitteredParams;
       return [
         algoSelect,
-        lengthSlider({
-          label: 'Spacing', minPx: 1, maxPx: 40, interaction: ia, reset: 4,
-          canvas: this.store.get().canvas,
-          title: 'Distance between candidate dots — lower means more dots',
-          get: () => d().spacing,
-          set: (v) => s.updateLayerField(id, 'distribution', { spacing: v } as never),
+        slider({
+          // A count across the picture, on a log track: proportional, so it
+          // means the same on a thumbnail and a poster, and wide enough that
+          // both a dozen marks and two thousand are one drag away.
+          label: 'Density', min: MIN_DENSITY, max: MAX_DENSITY, step: 1,
+          curve: 'log', interaction: ia, reset: 256, unit: 'across',
+          title: 'How many dots fit across the short edge of the picture. '
+            + 'A proportion of the image, not a distance in pixels, so it survives '
+            + 'a resize and does not depend on the resolution you opened',
+          get: () => d().density,
+          set: (v) => s.updateLayerField(id, 'distribution', { density: Math.round(v) } as never),
+        }),
+        readout(() => {
+          const c = this.store.get().canvas;
+          const n = Math.max(1, d().density);
+          const u = unitPx(c);
+          const cols = Math.round((n * c.width) / u);
+          const rows = Math.round((n * c.height) / u);
+          return `${formatSpan(1 / n, c)} apart · ${cols.toLocaleString()} × `
+            + `${rows.toLocaleString()} candidate sites`;
         }),
         slider({
           label: 'Tone steps', min: 1, max: 64, step: 1, interaction: ia, reset: 12,
@@ -404,9 +443,16 @@ export class Inspector {
       return [
         algoSelect,
         slider({
-          label: 'Dot count', min: 500, max: 200000, step: 500, interaction: ia, reset: 20000,
+          // Already scale-free — a count of dots is a count of dots — but it was
+          // on a linear track that spent most of its length above 100,000 and
+          // could not be set to 800 at all. Log, and up to where the relaxation
+          // stops being worth waiting for.
+          label: 'Dot count', min: 100, max: 1_000_000, step: 10,
+          curve: 'log', interaction: ia, reset: 20000,
+          title: 'How many dots the relaxation starts with. Independent of the '
+            + 'document size, so this is the same drawing at any resolution',
           get: () => d().points,
-          set: (v) => s.updateLayerField(id, 'distribution', { points: v } as never),
+          set: (v) => s.updateLayerField(id, 'distribution', { points: Math.round(v) } as never),
         }),
         slider({
           label: 'Relaxation', min: 0, max: 60, step: 1, interaction: ia, reset: 16,
@@ -428,10 +474,20 @@ export class Inspector {
     return [
       algoSelect,
       slider({
-        label: 'Lineature', min: 5, max: 200, step: 1, interaction: ia, unit: 'lpi', reset: 40,
-        title: 'Lines per inch, relative to the canvas DPI',
+        label: 'Lineature', min: 5, max: 400, step: 1,
+        curve: 'log', interaction: ia, unit: 'lpi', reset: 40,
+        title: 'Lines per inch of paper. The one density that is deliberately '
+          + 'physical rather than proportional: a halftone screen is a real object, '
+          + 'so enlarging the document puts more cells across the image, exactly as '
+          + 'enlarging the print would',
         get: () => d().lineature,
         set: (v) => s.updateLayerField(id, 'distribution', { lineature: v } as never),
+      }),
+      readout(() => {
+        const c = this.store.get().canvas;
+        const cell = Math.max(1, c.dpi) / Math.max(1, d().lineature);
+        return `${formatSpan(cell / unitPx(c), c)} cell · about `
+          + `${Math.round(unitPx(c) / cell).toLocaleString()} across the short edge`;
       }),
       slider({
         label: 'Screen angle', min: -180, max: 180, step: 0.5, interaction: ia, unit: '°', reset: 45,

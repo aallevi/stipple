@@ -2,7 +2,7 @@ import type { Store } from '../core/store';
 import type { CanvasSettings, ShapeDef } from '../core/types';
 import { SHAPE_PAD } from '../shape/rasterize';
 import { hint, readout, select, slider, type Control, type Interaction } from './controls';
-import { formatLength } from './units';
+import { formatSpan } from './units';
 
 /**
  * Geometry controls for whichever shape the selected layer is stamping.
@@ -16,18 +16,21 @@ export function shapeParamControls(
   store: Store,
   ia: Interaction,
   shapeId: string,
-  /** The layer's dark-end size in px, for resolving the fractions below. */
-  sizePx: () => number,
-  /** For writing those pixels back out in the document's own unit. */
+  /**
+   * The layer's dark-end size, in document units, for resolving the fractions
+   * below. Relative like every other layer length — see `core/scale.ts`.
+   */
+  sizeDoc: () => number,
+  /** For writing those spans back out in the document's own unit. */
   canvas: () => CanvasSettings,
 ): Control[] {
   const def = store.get().shapes.find((s) => s.id === shapeId);
   if (!def) return [hint('This layer points at a shape that is no longer in the library.')];
 
   // Every shape is drawn to the same radius inside its cell, so this one line
-  // converts any of the fractions below into the pixels they actually produce.
-  const across = (): number => sizePx() * (1 - SHAPE_PAD);
-  const len = (px: number): string => formatLength(px, canvas());
+  // converts any of the fractions below into the span it actually produces.
+  const across = (): number => sizeDoc() * (1 - SHAPE_PAD);
+  const len = (doc: number): string => formatSpan(doc, canvas());
 
   switch (def.kind) {
     case 'line':

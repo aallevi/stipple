@@ -383,6 +383,11 @@ export class App {
       } else if (meta && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         void this.openImage();
+      } else if (meta && (e.key === ']' || e.key === '[')) {
+        // The compositing-tool convention for raising and lowering a layer, and
+        // the one way to reorder the stack that needs neither aim nor a pointer.
+        e.preventDefault();
+        this.layers.nudge(e.key === ']' ? 1 : -1);
       } else if (e.key === '0') {
         this.fitToWindow();
       }
@@ -407,9 +412,10 @@ export class App {
       // Adopting the source dimensions outright, as this used to, meant the
       // document's physical size floated with whatever you opened: a 4000px
       // photograph became a thirteen-inch sheet at 300 dpi and a 1200px one
-      // became four, so the same Size and Spacing produced a coarse stipple on
-      // the first and a fine one on the second, and nothing you tuned carried
-      // over. Holding the long edge keeps every length meaning what it meant.
+      // became four. Layer lengths are relative now (`core/scale.ts`), so the
+      // drawing would survive that — but the print would not, and neither would
+      // the halftone lineature, which is ruled against the paper. Holding the
+      // long edge keeps the sheet the size you set it to.
       //
       // No detail is lost by this: the density map samples the source at its own
       // resolution regardless, so the canvas only decides how large the output

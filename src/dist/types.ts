@@ -67,6 +67,12 @@ export type GenContext = {
   /** Canvas dimensions; the density map may be a different resolution. */
   width: number;
   height: number;
+  /**
+   * Canvas pixels in one document unit — the short edge. Distributions that
+   * express their density relative to the picture rather than to the pixel grid
+   * multiply by this to get a spacing. See `core/scale.ts`.
+   */
+  unit: number;
   mask: LayerMask;
   /** 0..1. Below 1 the generator may thin the output for interactive preview. */
   quality: number;

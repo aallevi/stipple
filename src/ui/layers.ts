@@ -9,11 +9,14 @@ import { buildSeparation, SEPARATIONS } from './separations';
  *
  * Rendered top-first, the way every compositing tool shows it, while the project
  * stores bottom-first — the index flip lives here so nothing else has to think
- * about it.
+ * about it. `slotToIndex` is that flip, and it is the only place the two orders
+ * are allowed to meet.
  */
 export class LayersPanel {
   readonly el = h('div', { class: 'layers' });
   private list = h('div', { class: 'layer-list' });
+  /** The line showing where a dragged row would land. */
+  private marker = h('div', { class: 'layer-drop-marker' });
   selected: string | null = null;
 
   constructor(private store: Store, private onSelect: (id: string) => void) {
@@ -21,6 +24,8 @@ export class LayersPanel {
       h('div', { class: 'panel-head' },
         h('span', {}, 'Layers'),
         h('div', { class: 'panel-actions' },
+          button('↑', () => this.nudge(1), 'icon', 'Move the selected layer up the stack (⌘])'),
+          button('↓', () => this.nudge(-1), 'icon', 'Move the selected layer down the stack (⌘[)'),
           button('+', () => this.add(), 'icon', 'Add a layer'),
           button('⧉', () => this.duplicate(), 'icon', 'Duplicate the selected layer'),
           button('−', () => this.remove(), 'icon', 'Delete the selected layer'),
@@ -29,6 +34,34 @@ export class LayersPanel {
       this.separateMenu(),
       this.list,
     );
+    this.list.append(this.marker);
+  }
+
+  /**
+   * Move the selected layer one place through the stack. `+1` is up — towards
+   * the top of the panel, which is the *end* of the project array.
+   */
+  nudge(delta: number): void {
+    const layers = this.store.get().layers;
+    const from = layers.findIndex((l) => l.id === this.selected);
+    if (from < 0) return;
+    const to = from + delta;
+    if (to < 0 || to >= layers.length) return;
+    // `moveLayer` takes an insertion point in the list as it stands, so stepping
+    // up means naming the slot one past the neighbour being passed.
+    this.store.moveLayer(this.selected!, delta > 0 ? to + 1 : to);
+    this.render();
+  }
+
+  /**
+   * The project index an insertion slot in the *displayed* list refers to.
+   *
+   * Slot `k` means "above the k-th row from the top". The panel runs top-first
+   * and the project bottom-first, so the two count in opposite directions and
+   * the flip is a subtraction.
+   */
+  private slotToIndex(slot: number, count: number): number {
+    return count - slot;
   }
 
   /**
@@ -122,42 +155,94 @@ export class LayersPanel {
 
       const row = h('div', {
         class: `layer-row${layer.id === this.selected ? ' selected' : ''}`,
-        draggable: 'true',
         'data-id': layer.id,
       },
+        h('span', { class: 'layer-grip', title: 'Drag to reorder' }, '⠿'),
         visible,
         name,
         h('span', { class: 'layer-meta' },
           `${algoLabel(layer.distribution.algo)}${layer.input === 'below' ? ' · below' : ''}`),
       );
       row.addEventListener('click', () => this.select(layer.id));
-
-      row.addEventListener('dragstart', (e) => {
-        e.dataTransfer?.setData('text/plain', layer.id);
-        row.classList.add('dragging');
-      });
-      row.addEventListener('dragend', () => row.classList.remove('dragging'));
-      row.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        row.classList.add('drop-target');
-      });
-      row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
-      row.addEventListener('drop', (e) => {
-        e.preventDefault();
-        row.classList.remove('drop-target');
-        const dragged = e.dataTransfer?.getData('text/plain');
-        if (!dragged || dragged === layer.id) return;
-        // The visual list is reversed, so dropping onto a row means taking that
-        // row's position in project order.
-        const target = this.store.get().layers.findIndex((l) => l.id === layer.id);
-        this.store.moveLayer(dragged, target);
-        this.render();
-      });
+      row.addEventListener('pointerdown', (e) => this.beginDrag(e, layer.id, row));
 
       return row;
     });
 
-    this.list.replaceChildren(...rows);
+    this.list.replaceChildren(...rows, this.marker);
+    this.marker.style.display = 'none';
+  }
+
+  /**
+   * Reorder by pointer rather than by HTML5 drag-and-drop.
+   *
+   * The `dragstart`/`drop` pair this replaces never fired in the desktop app at
+   * all: the macOS webview hands drag gestures to the native file-drop handler
+   * before the page sees them, so the rows were draggable in a browser tab and
+   * inert in the shipped build — which is where the stack is actually used.
+   * Pointer events have no such owner, so this works in both, and it can show a
+   * real insertion line instead of highlighting a row and hoping.
+   */
+  private beginDrag(e: PointerEvent, id: string, row: HTMLElement): void {
+    // The name field has to keep its own click-to-edit and drag-to-select.
+    if ((e.target as HTMLElement).closest('input, button')) return;
+    if (e.button !== 0) return;
+
+    const startY = e.clientY;
+    let dragging = false;
+    let slot = -1;
+
+    const move = (ev: PointerEvent): void => {
+      if (!dragging) {
+        // A few pixels of slop, so a click that wobbles still selects rather
+        // than starting a move nobody asked for.
+        if (Math.abs(ev.clientY - startY) < 4) return;
+        dragging = true;
+        row.setPointerCapture(ev.pointerId);
+        row.classList.add('dragging');
+      }
+      slot = this.slotAt(ev.clientY);
+      this.showMarker(slot);
+    };
+
+    const up = (ev: PointerEvent): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (!dragging) return;
+      row.releasePointerCapture?.(ev.pointerId);
+      row.classList.remove('dragging');
+      this.marker.style.display = 'none';
+      if (slot >= 0) {
+        this.store.moveLayer(id, this.slotToIndex(slot, this.store.get().layers.length));
+        this.select(id);
+      }
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+
+  /** Which insertion slot a pointer at `clientY` is nearest. */
+  private slotAt(clientY: number): number {
+    const rows = [...this.list.querySelectorAll<HTMLElement>('.layer-row')];
+    for (let i = 0; i < rows.length; i++) {
+      const box = rows[i].getBoundingClientRect();
+      if (clientY < box.top + box.height / 2) return i;
+    }
+    return rows.length;
+  }
+
+  /** Park the insertion line at the top edge of the row that slot sits above. */
+  private showMarker(slot: number): void {
+    const rows = [...this.list.querySelectorAll<HTMLElement>('.layer-row')];
+    const listBox = this.list.getBoundingClientRect();
+    const edge = slot < rows.length
+      ? rows[slot].getBoundingClientRect().top
+      : rows[rows.length - 1].getBoundingClientRect().bottom;
+    this.marker.style.display = 'block';
+    this.marker.style.top = `${edge - listBox.top + this.list.scrollTop}px`;
   }
 }
 

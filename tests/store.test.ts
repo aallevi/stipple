@@ -38,11 +38,11 @@ describe('Store invalidation', () => {
     expect(last()!.layers.get(id)).toBe(Dirty.Composite);
   });
 
-  it('escalates a spacing change to a point regeneration', () => {
+  it('escalates a density change to a point regeneration', () => {
     const store = new Store(defaultProject());
     const id = store.get().layers[0].id;
     const last = capture(store);
-    store.updateLayerField(id, 'distribution', { spacing: 12 } as never);
+    store.updateLayerField(id, 'distribution', { density: 90 } as never);
     expect(last()!.layers.get(id)).toBe(Dirty.Points);
   });
 
@@ -79,7 +79,7 @@ describe('Store invalidation', () => {
     const upper = defaultLayer('Over');
     store.addLayer(upper);
     const last = capture(store);
-    store.updateLayerField(upper.id, 'distribution', { spacing: 3 } as never);
+    store.updateLayerField(upper.id, 'distribution', { density: 340 } as never);
     expect(last()!.layers.has(lower)).toBe(false);
   });
 });
@@ -100,10 +100,10 @@ describe('Store history', () => {
     const store = new Store(defaultProject());
     const id = store.get().layers[0].id;
     // A slider drag: many updates under one history key inside the coalesce window.
-    for (let i = 1; i <= 20; i++) store.updateLayerField(id, 'size', { max: i });
-    expect(store.layer(id)!.size.max).toBe(20);
+    for (let i = 1; i <= 20; i++) store.updateLayerField(id, 'size', { max: i / 1000 });
+    expect(store.layer(id)!.size.max).toBe(0.02);
     store.undo();
-    expect(store.layer(id)!.size.max).toBe(4); // back to the default in one step
+    expect(store.layer(id)!.size.max).toBe(0.004); // back to the default in one step
     expect(store.canUndo()).toBe(false);
   });
 
@@ -116,6 +116,62 @@ describe('Store history', () => {
     expect(store.get().layers.map((l) => l.id)).toEqual([second.id, first]);
     store.undo();
     expect(store.get().layers.map((l) => l.id)).toEqual([first, second.id]);
+  });
+
+  /**
+   * `moveLayer` takes an insertion point in the list as it stands, not a
+   * destination index. The two differ by one whenever the layer travels
+   * upwards, because lifting it out shifts everything above it down — which is
+   * exactly the off-by-one that makes a drag land one row short of the line the
+   * panel drew.
+   */
+  describe('moveLayer insertion points', () => {
+    const stack = (): { store: Store; ids: string[] } => {
+      const store = new Store(defaultProject());
+      const ids = [store.get().layers[0].id];
+      for (const name of ['B', 'C', 'D']) {
+        const l = defaultLayer(name);
+        store.addLayer(l);
+        ids.push(l.id);
+      }
+      return { store, ids };
+    };
+    const order = (store: Store): string[] => store.get().layers.map((l) => l.name);
+
+    it('moves a layer up to the slot the drop line was drawn at', () => {
+      const { store, ids } = stack();
+      // A → above D, which in a four-layer stack is slot 4.
+      store.moveLayer(ids[0], 4);
+      expect(order(store)).toEqual(['B', 'C', 'D', 'Stipple 1']);
+    });
+
+    it('moves a layer down to the same slot, unadjusted', () => {
+      const { store, ids } = stack();
+      store.moveLayer(ids[3], 1);
+      expect(order(store)).toEqual(['Stipple 1', 'D', 'B', 'C']);
+    });
+
+    it('treats a drop on either side of the layer itself as no move', () => {
+      const { store, ids } = stack();
+      const before = order(store);
+      store.moveLayer(ids[1], 1);
+      store.moveLayer(ids[1], 2);
+      expect(order(store)).toEqual(before);
+      // And neither one spent an undo step on doing nothing.
+      expect(store.canUndo()).toBe(true);
+      store.undo();
+      store.undo();
+      store.undo();
+      expect(store.canUndo()).toBe(false);
+    });
+
+    it('clamps a slot past either end instead of dropping the layer', () => {
+      const { store, ids } = stack();
+      store.moveLayer(ids[2], 99);
+      expect(order(store)).toEqual(['Stipple 1', 'B', 'D', 'C']);
+      store.moveLayer(ids[2], -5);
+      expect(order(store)).toEqual(['C', 'Stipple 1', 'B', 'D']);
+    });
   });
 });
 
@@ -164,13 +220,13 @@ describe('project serialisation', () => {
     const store = new Store(defaultProject(800, 600));
     const id = store.get().layers[0].id;
     store.updateLayerField(id, 'color', { mode: 'multicolor' });
-    store.updateLayerField(id, 'distribution', { spacing: 7 } as never);
+    store.updateLayerField(id, 'distribution', { density: 146 } as never);
 
     const json = JSON.stringify(store.get());
     const restored = JSON.parse(json);
     expect(restored).toEqual(JSON.parse(JSON.stringify(store.get())));
     expect(restored.layers[0].color.mode).toBe('multicolor');
-    expect(restored.layers[0].distribution.spacing).toBe(7);
+    expect(restored.layers[0].distribution.density).toBe(146);
   });
 });
 

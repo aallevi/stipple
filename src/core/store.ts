@@ -166,12 +166,25 @@ export class Store {
     this.schedule();
   }
 
+  /**
+   * Move a layer to sit before `toIndex` of the stack *as it stands now*.
+   *
+   * An insertion point rather than a destination index, because that is the only
+   * one of the two a caller can name without knowing which way the layer is
+   * about to travel: a drop between two rows is "here", and "here" is a
+   * different index once the dragged layer has been lifted out from below it.
+   * Doing that adjustment here is what keeps a drop landing where the line was
+   * drawn, in both directions.
+   */
   moveLayer(id: string, toIndex: number): void {
     const from = this.project.layers.findIndex((l) => l.id === id);
-    if (from < 0 || from === toIndex) return;
+    if (from < 0) return;
+    const target = Math.max(0, Math.min(toIndex, this.project.layers.length));
+    const dest = target > from ? target - 1 : target;
+    if (dest === from) return;
     this.commit(`move:${id}`);
     const [layer] = this.project.layers.splice(from, 1);
-    this.project.layers.splice(Math.max(0, Math.min(toIndex, this.project.layers.length)), 0, layer);
+    this.project.layers.splice(dest, 0, layer);
     this.pending.structural = true;
     // Anything reading from `below` sees a different image now.
     for (const l of this.project.layers) {

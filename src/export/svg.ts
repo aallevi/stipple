@@ -1,3 +1,4 @@
+import { resolvedLayers } from '../core/scale';
 import type { Layer, Project, ShapeDef } from '../core/types';
 import { POINT_STRIDE } from '../dist/types';
 import type { Engine } from '../pipeline/engine';
@@ -62,8 +63,12 @@ export function exportSVG(engine: Engine, project: Project, opts: ExportOptions 
   const plate = opts.plate;
   const mono = opts.mono ?? false;
   const m = opts.margin ?? 0;
+  // Layer lengths are stored relative to the document (see `core/scale.ts`), so
+  // the stack is resolved to canvas pixels once here and everything below —
+  // `evaluatePoint`, the group transform — reads pixels as it always did.
+  const layers = resolvedLayers(project);
   const shapesUsed = new Map<string, ShapeDef>();
-  for (const layer of project.layers) {
+  for (const layer of layers) {
     if (!layer.visible || layer.opacity <= 0) continue;
     const def = project.shapes.find((s) => s.id === layer.shapeId);
     if (def) shapesUsed.set(def.id, def);
@@ -120,7 +125,7 @@ export function exportSVG(engine: Engine, project: Project, opts: ExportOptions 
   const sampleColor = (x: number, y: number): [number, number, number] =>
     engine.sampleSourceColor(x, y);
 
-  for (const layer of project.layers) {
+  for (const layer of layers) {
     if (!layer.visible || layer.opacity <= 0) continue;
     const route = plate ? plate.route(layer) : 'all';
     if (route !== 'all' && route !== 'per-point' && route !== plate!.index) continue;

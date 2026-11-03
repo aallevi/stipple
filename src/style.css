@@ -274,11 +274,28 @@ select {
   border-bottom: 1px solid var(--line);
   max-height: 210px;
   overflow-y: auto;
+  /* The insertion line is positioned against this. */
+  position: relative;
+}
+
+/* Where a dragged row would land. A line between rows rather than a highlight
+   on one, because "above this" and "below this" are different drops and a
+   highlight cannot tell them apart. */
+.layer-drop-marker {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+  display: none;
 }
 
 .layer-row {
   display: grid;
-  grid-template-columns: 18px 1fr auto;
+  grid-template-columns: 12px 18px 1fr auto;
   align-items: center;
   gap: 7px;
   padding: 5px 7px;
@@ -289,7 +306,21 @@ select {
 .layer-row:hover { background: var(--panel-2); }
 .layer-row.selected { background: var(--accent-soft); border-color: var(--accent-dim); }
 .layer-row.dragging { opacity: 0.4; }
-.layer-row.drop-target { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* The row is dragged by pointer, so the text inside it must not start a
+   selection on the way — that is what makes the gesture feel like moving an
+   object rather than sweeping over words. The name field opts back in. */
+.layer-row { user-select: none; -webkit-user-select: none; }
+.layer-name { user-select: text; -webkit-user-select: text; }
+
+.layer-grip {
+  color: var(--text-faint);
+  cursor: grab;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+}
+.layer-row.dragging .layer-grip { cursor: grabbing; }
 
 .vis {
   background: none;

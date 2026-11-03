@@ -1,18 +1,20 @@
+import { unitPx } from '../core/scale';
 import type { CanvasSettings } from '../core/types';
 import { slider, type Control, type Interaction } from './controls';
 
 /**
  * Lengths, in units a person can hold in their head.
  *
- * The engine measures everything in canvas pixels, and it should: they are the
- * grid the point buffers and the atlas live on. But a canvas pixel is a bad
- * thing to *design* in, because it is not a fixed quantity. Open a bigger
- * photograph and the document grows to match it, so a 4 px dot that read as a
- * coarse stipple on one image reads as a fine one on the next, and none of the
- * numbers you tuned carry over.
+ * The project stores every layer length as a fraction of the document's short
+ * edge (`core/scale.ts`), which is the right thing to *keep* — it is the only
+ * form that survives a resize — and a hopeless thing to read: nobody judges a
+ * dot by "0.004". So the panel writes those fractions in millimetres, inches or
+ * per cent, and converts here, in one place. Nothing downstream of the panel
+ * knows this module exists.
  *
- * So the sliders are labelled in something stable and converted here, in one
- * place. Nothing downstream of the panel knows this module exists.
+ * The canvas's own width and height stay a count of pixels, and `formatLength`
+ * is what writes those; layer lengths go through `formatSpan` and
+ * `lengthSlider`.
  */
 
 const MM_PER_INCH = 25.4;
@@ -26,8 +28,9 @@ export function pxPerUnit(canvas: CanvasSettings): number {
     case 'in': return Math.max(1, canvas.dpi);
     // Of the *short* edge, so a tall crop and a wide one agree about what 1%
     // means; against the long edge the same number would read differently
-    // depending on which way up the picture is.
-    case '%': return Math.max(1, Math.min(canvas.width, canvas.height)) / 100;
+    // depending on which way up the picture is. This is the document unit
+    // itself, so `%` is the one display unit that needs no conversion at all.
+    case '%': return unitPx(canvas) / 100;
     default: return 1;
   }
 }
@@ -79,30 +82,53 @@ export function formatLength(px: number, canvas: CanvasSettings): string {
   return `${fromPx(px, canvas).toFixed(decimalsFor(canvas))} ${unitLabel(canvas)}`;
 }
 
+/** Display units per one document unit — see `core/scale.ts`. */
+function perDoc(canvas: CanvasSettings): number {
+  return unitPx(canvas) / pxPerUnit(canvas);
+}
+
 /**
- * A slider whose value is stored in canvas pixels and shown in the document's
- * unit. `minPx`/`maxPx` are the range in pixels; everything the user sees is
- * converted.
+ * The same as `formatLength`, for a length stored relative to the document.
+ *
+ * Every length a layer carries is one of these, so this is what the panel's
+ * readouts speak; `formatLength` is left for the canvas's own dimensions, which
+ * really are a count of pixels.
+ */
+export function formatSpan(doc: number, canvas: CanvasSettings): string {
+  return formatLength(doc * unitPx(canvas), canvas);
+}
+
+/**
+ * A slider over a length stored relative to the document, shown in the
+ * document's unit.
+ *
+ * `min`/`max`/`get`/`set`/`reset` are all in document units — fractions of the
+ * canvas short edge, the way layers store every length (see `core/scale.ts`).
+ * That is what gives a big picture the same freedom of movement as a small one:
+ * the range is a proportion of the picture, so a slider that reaches a coarse
+ * mark on a postcard reaches an equally coarse one on a poster, instead of
+ * topping out at a hairline because the pixel count went up.
  *
  * The control is built against one unit and one resolution, so the inspector
  * has to rebuild when either changes — both are in its key.
  */
 export function lengthSlider(opts: {
   label: string;
-  minPx: number;
-  maxPx: number;
+  /** Range in document units — fractions of the canvas short edge. */
+  min: number;
+  max: number;
   canvas: CanvasSettings;
   get(): number;
   set(v: number): void;
   interaction?: Interaction;
-  /** In canvas pixels, like `get`/`set`. */
+  /** In document units, like `get`/`set`. */
   reset?: number;
   title?: string;
 }): Control {
   const { canvas } = opts;
-  const per = pxPerUnit(canvas);
-  const min = opts.minPx / per;
-  const max = opts.maxPx / per;
+  const per = perDoc(canvas);
+  const min = opts.min * per;
+  const max = opts.max * per;
   // The slider may need finer steps than the readout shows — a 5 mm range wants
   // hundredths — but never coarser, or typing a number into the field would
   // round to something the readout then contradicts.
@@ -116,9 +142,9 @@ export function lengthSlider(opts: {
     step,
     unit,
     interaction: opts.interaction,
-    reset: opts.reset === undefined ? undefined : opts.reset / per,
+    reset: opts.reset === undefined ? undefined : opts.reset * per,
     title: opts.title ? `${opts.title}\nMeasured in ${unit}; change the unit in Document` : undefined,
-    get: () => opts.get() / per,
-    set: (v) => opts.set(v * per),
+    get: () => opts.get() * per,
+    set: (v) => opts.set(v / per),
   });
 }
