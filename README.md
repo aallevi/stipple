@@ -1,403 +1,124 @@
 # Stipple
 
-A stippling tool for turning photographs into generative point drawings, in the vein of
-[Pointillist](https://www.stochaster-apps.com/pointillist.html) — with two things that
-tool does not have: a real layer stack, and shapes you can import.
+Turn photographs into stippled, screened and line-drawn point art, then split it into
+films you can burn onto screens.
 
 ![Stipple](artifacts/app.png)
 
-Runs as a macOS/Windows desktop app (Tauri v2) with a WebGL2 engine. Everything is
-local; nothing is uploaded anywhere.
+I've been using this to have some screen printing fun at home, and it's freely available
+to anyone who'd like the same. It isn't a product. It's a tool that has made a lot of
+prints I'm happy with, and I hope it does the same for you.
+
+- **Layers.** Each layer has its own algorithm, shape, ink, tone mask and blend mode. A
+  layer can also read *the render beneath it* instead of the photo.
+- **Three distributions.** Stochastic (jittered), weighted Voronoi (on the GPU, up to a
+  million dots) and classic halftone screens.
+- **Any shape as a dot.** Choose from the built-in shapes or drop in your own SVG or
+  transparent PNG. Shapes stay vector all the way out.
+- **Made for printing.** Spot-ink separations, CMYK/duotone/tritone plates, and one
+  black-on-white film per ink with registration marks.
+- **Local.** It runs entirely on your machine. Nothing is uploaded.
 
 ---
 
-## What it does differently
+## Install
 
-**A stack, not a single pass.** Pointillist applies one configuration to the whole
-image. Here every layer has its own algorithm, shape, colour, tone mask, blend mode and
-transform — and a layer can be set to read *the render beneath it* rather than the source
-photo (`Reads from → Layers below`). Blur that input and the dots underneath become
-continuous tone, so the upper layer lands exactly where the lower one laid ink. The ink
-is the mask. No other setting reproduces that.
-
-**Imported shapes are not a special case.** Drop in an `.svg` or a `.png` with
-transparency and it joins the shape library beside the built-ins. Every shape — circle,
-polygon, line, your file — is rasterised to a signed distance field in one atlas, so an
-imported logo supports every size, rotation and colour mode, stays crisp at any scale,
-and comes out of SVG and PDF export as real vector geometry rather than a traced bitmap.
-
-**Efficiency is structural, not incidental.** Point buffers hold only *invariants* —
-position, tone, gradient, a stable random. Size, rotation and colour are derived in the
-vertex shader from those plus layer uniforms. Dragging a size or colour slider therefore
-costs a uniform update and one instanced draw call; it does not regenerate a single
-point. In the verification run, thirty consecutive appearance edits on a 240,000-point
-stack do exactly zero generation work.
-
----
-
-## Getting started
+You need [Node.js](https://nodejs.org) 20 or newer and a browser with WebGL2 (any recent
+Chrome, Firefox, Safari or Edge).
 
 ```bash
+git clone https://github.com/aallevi/stipple.git
+cd stipple
 npm install
-npm run app          # desktop app in dev mode
+npm start
 ```
 
-`npm run dev` alone serves the same UI in a browser at <http://localhost:1420>, which is
-faster to iterate on. Only native file dialogs and TIFF decoding need the desktop shell.
+`npm start` builds the app and opens it at <http://localhost:4173>. Press `Ctrl-C` in the
+terminal to stop it. That's the whole install; you don't need Rust or a desktop shell.
 
-To produce a distributable bundle:
+| Command | What it does |
+|---|---|
+| `npm start` | Build, then serve and open in your browser |
+| `npm run dev` | Live-reloading dev server at <http://localhost:1420> |
+| `npm run build` | Type-check and write a static site to `dist/` |
+
+`dist/` is plain static files with relative paths, so you can host it anywhere, from a
+folder on a web server to GitHub Pages.
+
+### Optional: the desktop app
+
+A native window (Tauri v2) adds two things: native file dialogs and TIFF import. To build
+it you also need a [Rust toolchain](https://rustup.rs).
 
 ```bash
-npm run app:build    # -> src-tauri/target/release/bundle/
+npm run app            # run it in dev mode
+npm run app:build      # bundle → src-tauri/target/release/bundle/
+npm run install-app    # macOS: build and copy into /Applications (add -- --launch to open it)
 ```
-
-Requires Node 20+ and a Rust toolchain.
 
 ---
 
-## Upgrading an installed copy
+## Usage
 
-The bundle in `/Applications` is disposable build output. **This project directory is the
-only master copy** — the app has no auto-update and no persisted state inside the bundle
-(projects are `.stipple` files you save wherever you like), so upgrading is just building
-again and replacing it.
+1. **Open an image** (`⌘O` / `Ctrl+O`). The app starts on a test card, so you always
+   have something to look at.
+2. **Pick a preset** to see what's possible: *Classic stipple*, *Voronoi drawing*,
+   *Three-angle screens*, *Contour lines* and others.
+3. **Work down the sidebar.** Set the layer, distribution, shape, size, rotation, ink
+   and colour. Each section only changes what's below it in the chain.
+4. **Set the document** to the size and dpi you'll print at. Every length is shown in
+   mm, inches or %, and it's the size you'll get.
+5. **Export** to PNG, SVG or PDF, or **Plates** for screen printing.
+
+### From photo to screens
+
+- **Spot inks.** Set *Colour → Spot inks*, pick 2–8 inks (or *Sample the colours* /
+  *Posterise the tones*), and every dot commits to exactly one ink. *Mixing* runs from
+  flat posterised bands (0) to dithered colour (1). *Leave paper* keeps the highlights
+  as bare stock.
+- **Process.** Choose *Separate into inks…* above the layer list to rebuild the stack
+  as CMYK, CMY, duotone or tritone plates, each with its own screen angle.
+- **Plates.** The *Plates* button writes one SVG film per ink, solid black on white,
+  plus a colour proof. Every film has identical registration marks. It lists the
+  screens it found before writing anything.
+
+### Shortcuts
+
+| Key | Action |
+|---|---|
+| `⌘O` | Open image |
+| `⌘Z` / `⇧⌘Z` | Undo / redo |
+| `⌘]` / `⌘[` | Raise / lower the selected layer |
+| `0` | Fit to window |
+
+Use `Ctrl` instead of `⌘` on Windows and Linux. You can also reorder layers by dragging
+the grip, and add a shape by dropping an SVG or PNG on the shape panel.
+
+### Files
+
+| | Formats |
+|---|---|
+| Images in | PNG, JPEG, WebP, GIF, BMP, plus TIFF in the desktop app |
+| Shapes in | SVG, or PNG/WebP/GIF with transparency |
+| Out | PNG at the document resolution, SVG, PDF, SVG plates |
+| Projects | `.stipple` files from *Save* and *Load* |
+
+---
+
+## Learn more
+
+- **[The guide](docs/GUIDE.md)** explains every control, how they relate, and the full
+  screen-printing workflow.
+- **[Architecture](docs/ARCHITECTURE.md)** covers the dirty-graph engine, GPU Voronoi,
+  signed-distance shapes, tiled export and the test suites.
 
 ```bash
-cd ~/Documents/Claude/Projects/stipplingtool
-npm run install-app
+npm test               # unit tests
+npm run verify         # end-to-end browser checks (with `npm run dev` running)
 ```
 
-That quits Stipple if it is open, rebuilds, and swaps the bundle in `/Applications`.
-`/Applications` is group-writable by admin users, so no `sudo`. Options:
+Issues and pull requests are welcome. Prints made with it are even more welcome.
 
-| | |
-|---|---|
-| `npm run install-app -- --launch` | reopen the app when it is done |
-| `npm run install-app -- --skip-build` | install whatever is already built |
+## License
 
-The copy is staged beside the destination and moved into place, so an interrupted install
-cannot leave a half-written bundle behind.
-
-**Working with Claude on it.** Point a session at this directory and describe the change;
-the source gets edited here, and `npm run install-app` is what puts it in your Applications
-folder. Nothing about the installed copy needs to be touched by hand — and nothing in it is
-worth preserving, so it is always safe to replace.
-
-While iterating, `npm run app` is faster than a full rebuild, and `npm run dev` (browser at
-<http://localhost:1420>) is faster still. Only native file dialogs and TIFF decoding need
-the desktop shell.
-
----
-
-## Using it
-
-Open an image (the app starts on a synthetic test card so there is always something on
-screen), pick a preset to see the shape of things, then work down the sidebar.
-
-### The layer stack
-
-The panel lists the stack the way every compositing tool does — topmost layer at the
-top — while the project stores it bottom-first, which is the order it renders in.
-
-Reorder it by dragging a row by its grip; a line shows where the layer will land, and
-it lands there in both directions. `⌘]` and `⌘[` (`Ctrl` on Windows) raise and lower
-the selected layer, and the `↑` `↓` buttons in the panel header do the same thing with
-the mouse. Order is not cosmetic here: a layer set to `Reads from → Layers below`
-samples the composite beneath it, so moving one changes what it draws, not just what
-covers what.
-
-### How the controls relate
-
-Everything on the right-hand side is one chain. Knowing where a control sits in it
-is usually enough to predict what it will do.
-
-```
- SOURCE ──► Image adjust ──► Ink ──────► tone 0..1 ──┬──► Tone mask ──► keep / drop
-            gamma, blur,     luma, or                │
-            brightness,      coverage of             └──► Distribution ──► where the
-            contrast,        one ink                      density / lineature / count
-            sharpen, invert                                        │
-                                                                   ▼
-                                            POINT (x, y, tone, gradient, random)
-                                                                   │
-   ink = tone, flipped by "Swap light / dark"                      │
-        │                                                          ▼
-        ├─► Size      = Size × lerp(1 − Tone spread, 1, ink ^ Tone response)
-        │                     × (1 ± Size jitter)          ── a fraction of the picture
-        ├─► Rotation  = Angle + random·Randomness + contour·Follow contours
-        └─► Colour    = mode(tone, random) × (1 ± Colour jitter)
-                        or, in Spot inks: nearest ink to the pixel,
-                        dithered towards a second one by Mixing
-                                                                   │
-                                                                   ▼
-                                                    ┌──── the stamp ────┐
-   circle / polygon     across = Size × 0.84                   ← 0.84 leaves the
-   line family          across = Size × 0.84 × Length            distance field
-                        stroke = across × Thickness              room to fall off
-                                                                   │
-                                            Transform (scale, rotate, offset, flip)
-                                                                   ▼
-                                            Blend mode + Layer opacity ──► the layer below
-```
-
-Three rules fall out of that, and they are the ones worth remembering:
-
-**Nothing is measured in pixels.** Every length a layer carries — `Size`, `Blur`,
-`Offset` — is stored as a fraction of the picture's short edge, and `Density` is a
-count of dots across it. So a document twice as wide is the same drawing at twice the
-size, a preset lands the same way on a snapshot and on a scan, and the sliders offer
-the same range of coarse-to-fine whatever resolution you opened. The panel writes all
-of it in millimetres, inches or per cent — pick which in Document — so you never have
-to think in fractions either.
-
-The one deliberate exception is the halftone `Lineature`, which is lines per inch of
-*paper*. A halftone screen is a physical object, so enlarging the document puts more
-cells across the image, exactly as enlarging the print would.
-
-**Shape parameters are fractions too.** `Length` is a fraction of the mark's cell and
-`Thickness` is a fraction of the mark's own length, so a line keeps its proportions
-when you resize the layer, and thickening one grows it inward instead of pushing it
-out of its cell. The panel shows the length each fraction resolves to, so you never
-have to do that arithmetic.
-
-**Size is a ramp, not a number.** `Size` sets the dark end; `Tone spread` says how
-much smaller the light end gets; `Tone response` is the curve between them. Leave the
-response at 1 for drawing — mark width tracks tone. Set it to 0.5 for anything meant
-to print: ink coverage goes as the square of the dot, so a linear ramp lays a 50%
-grey down at about 68%.
-
-**Distribution** — how points are placed.
-
-| Algorithm | Character | Good for |
-|---|---|---|
-| Stochastic (jittered grid) | Blue-noise-ish, density from tone | The workhorse; instant at any density |
-| Weighted Voronoi | Evenly spaced, hand-stippled feel | Fine-art stipple, plotter output |
-| Halftone screen | Regular lattice, tone carried by dot size | Print separations, rosettes, line screens |
-
-`Density` is how many dots fit across the short edge of the picture, from eight to two
-thousand, on a slider spaced by ratio rather than by difference — so the fine end is
-as adjustable as the coarse one instead of being crushed into the last few pixels of
-the track. The Voronoi `Dot count` works the same way and runs to a million. Neither
-is bounded by the document's resolution: the output is vector, so there is no pixel
-grid for a screen to be too fine for, and the only ceiling is the four-million-point
-budget each layer gets. The readout under the slider says what you are actually
-getting — the spacing in millimetres, and the grid it comes to.
-
-**Shape** — the library sits at the top of the section, so picking a stamp and tuning it
-is one movement. Whichever shape is selected exposes its own geometry below the grid: a
-line shape gives you `Arms`/`Segments`, `Length`, `Thickness` and `Waviness`, a polygon
-gives you `Sides`, `Inner radius` and `Irregularity`. Those edits belong to the document,
-and they are shared by every layer pointing at that shape — `Duplicate` forks it first if
-you want a six-armed burst and a sixteen-armed one in the same stack.
-
-**Size** — `Size` is the overall scale, `Tone spread` how much smaller the quiet end
-of the range gets, `Tone response` the curve between them (0.5 for print, 1 for
-drawing). The readout resolves the pair into pixels.
-
-**Rotation** — a fixed `Angle`, per-mark `Randomness`, and `Follow contours`, which
-aligns each mark to the image's contours and is what makes line shapes flow around forms.
-
-**Ink** — what the layer measures. `Overall tone` is the default. `One ink` measures
-how much of a single ink the image asks for at each pixel, which is what makes a layer
-one plate of a separation; `Undercolour` decides how much of the neutral component it
-leaves to a black plate.
-
-**Colour** — solid, adaptive (hue ramps with tone), sampled from the image, a random
-palette pick per point, or **spot inks**. This is the ink the layer *prints with*, which
-is separate from the ink it *measures* — the Ink section has a button to match one to
-the other.
-
-### Printing it by hand
-
-There are two ways to get from a photograph to a set of screens, and they make
-different-looking prints. The tool supports both, and the difference is worth
-understanding before you pick one.
-
-**Spot inks — one layer, one dot, one ink.** Set `Colour mode → Spot inks`, choose two
-to eight inks, and every dot is printed with exactly one of them. That is the whole
-point: a dot is a hole in a screen, and a screen holds one colour, so a drawing where
-each mark commits to an ink is a drawing you can actually pull. `Mixing` decides how
-strictly each dot is held to its nearest ink:
-
-| `Mixing` | What you get |
-|---|---|
-| 0 | **Posterised.** Every dot takes the nearest ink; areas come out flat and unmixed — brown, light brown, ochre, with visible boundaries between them. |
-| ~0.5 | **Partly mixed.** Dots stray towards a second ink near the boundaries, softening them, while the bands stay readable. |
-| 1 | **Scattered.** Dots dither between the two inks that best rebuild the colour and the eye does the mixing. With cyan, magenta and yellow this is a process print. |
-
-`Match on` decides what "nearest" means. **Colour** compares the whole colour, which is
-what a scatter separation wants. **Lightness only** ignores hue, so a palette ordered dark
-to light reads the photograph as tonal bands — which is why a portrait printed in three
-earth inks stays a portrait instead of breaking into unrelated hues.
-
-Two buttons build a palette from the picture. **Sample the colours** clusters it in full
-colour, for a scatter print. **Posterise the tones** builds a dark-to-light ramp keeping
-each band's own colour, then sets `Match on` to lightness and `Mixing` to 0 — the whole
-posterise in one press. The readout underneath the swatches says what share of the paper
-each screen would actually cover, which is the number that decides whether an ink is worth
-the pull.
-
-`Leave paper` adds the stock as a candidate that is matched against but never printed,
-so highlights come out as bare paper instead of spending a whole screen on the palest
-ink. `Propose inks from the image` clusters the photograph and fills the palette with
-the colours it is actually made of, skipping anything close to the paper.
-
-One thing to know: by default a layer already gets fewer dots *and* smaller dots in the
-lights, and in spot mode the ink choice lightens them a third time — so the print comes
-out much paler than the photograph. The panel notices and offers **Set up for even
-coverage**, which lays dots down evenly at one size and leaves lightness entirely to
-which ink each dot takes. That is what a real scatter separation does.
-
-**Process separations — one layer per ink.** The menu at the top of the layer stack
-replaces the stack with one plate per ink: CMYK, CMY, RGB, duotone or tritone, screened
-or stippled. Here each layer *measures* the coverage of its own ink and prints solid in
-it; the plates multiply, carry the classic 30°-apart screen angles, and only the black
-plate carries the neutrals, so total ink coverage stays printable. Each plate is an
-ordinary layer afterwards — change its ink, its screen, or its shape like any other.
-
-Use spot inks when you want to choose the colours, and when a posterised or hand-printed
-look is the point. Use process separations when you want a faithful reproduction and are
-happy to print C, M, Y and K.
-
-**Plates** — the `Plates` button separates whatever is on screen into films: one SVG per
-ink, solid black on white, plus a colour proof, all with identical registration marks in
-a margin outside the artwork. It works on either route — a spot layer is split dot by
-dot, and a stack of solid-coloured layers is split layer by layer — and it tells you
-which screens it found before it writes anything. A layer that is not one ink (a hue
-ramp, or colour sampled straight from the image) cannot belong to a single screen, so it
-is left out and named in the warning.
-
-**Document** — width and height are staged, not applied live: resizing invalidates
-every cache and re-runs every distribution, so a drag across the slider would queue
-thousands of full rebuilds. The readout shows what you are about to get, in pixels and
-in inches at the current resolution; Apply commits it.
-
-**One canvas pixel is 1/dpi of an inch**, everywhere — the panel readout, the halftone
-lineature, and all four exporters. A 900 × 600 document at 300 dpi is 3 × 2 inches, and
-that is the size the SVG, the PDF and the plates open at; the PNG comes out 900 × 600,
-one pixel per canvas pixel. Set the resolution you intend to print at and the numbers
-in the panel are the numbers you get.
-
-**Measure in** decides what every length in the panel is written in — millimetres by
-default, or inches, or per cent of the short edge, or raw canvas pixels. The engine works
-in pixels throughout; this only changes how they are typed and read. Millimetres and
-inches hold as long as the resolution does. Per cent holds whatever size the document is,
-which is the one to pick when the same treatment has to work on pictures of different
-sizes.
-
-Opening an image takes its *shape*, not its pixel count: the document keeps its long edge
-and adopts the new aspect ratio, so a 4000px photograph and a 1200px one land in the same
-physical sheet and every length you tuned still means what it meant. No detail is lost by
-that — the density map samples the source at its own resolution regardless, and the canvas
-only sets how large the output raster is.
-
-**Tone mask** — restrict a layer to a slice of the tonal range, with feathered edges.
-Two layers with complementary masks and different shapes is the cheapest route to a
-hand-drawn look: coarse marks in the shadows, fine ones in the light.
-
-**Image adjust** — per-layer brightness, contrast, gamma, blur, sharpen, invert. Note
-the order: gamma, then blur, then brightness, then contrast. Blur precedes the grade so
-that a layer reading the render below it has continuous tone to work with, and brightness
-precedes contrast so the contrast pivot can be moved onto whatever part of the range the
-input actually occupies.
-
-Export is PNG (1:1 at the document resolution), SVG, PDF, or `Plates` for screenprinting.
-Both vector formats emit one definition per shape and one instance per point, so files
-stay proportionate — though past a few hundred thousand points any vector file becomes
-slow to open, and the export dialog will say so. Plate export writes SVG only; open the
-films in any vector editor if your bureau wants PDF.
-
----
-
-## How it works
-
-```
-source image ─┐
-              ├─► density map ──► distribution ──► point buffer ──┐
-layers below ─┘   (prefilter,      (jittered /      (x, y, tone,  │
-                   gradient,        voronoi /        gradient,    │
-                   mip chain)       halftone)        random)      │
-                                                                  ▼
-                                        shape atlas (SDF) ──► instanced draw ──► layer FBO
-                                                                                     │
-                                                            blend mode + opacity ────┤
-                                                                                     ▼
-                                                                              composited stack
-```
-
-**The dirty graph** (`src/core/store.ts`, `src/pipeline/engine.ts`). Every mutation
-declares how much it invalidates, derived from which fields it touches:
-
-| Edit | Invalidates |
-|---|---|
-| colour, size, rotation, opacity, blend, shape | the draw only |
-| density, algorithm, tone mask | that layer's points |
-| prefilter, input source | that layer's density map, then its points |
-| source image, canvas size | everything |
-
-A change also cascades *upward* to any layer above it that reads from below, and never
-downward. Layers cache their density map, point buffer and GPU batch independently.
-
-**Weighted Voronoi on the GPU** (`src/dist/voronoi.ts`). The textbook implementation
-rebuilds a Delaunay triangulation on the CPU every Lloyd iteration and stalls somewhere
-around twenty thousand points. Here each iteration is a fixed handful of draw calls:
-splat the sites into a grid, jump-flood until every pixel knows its nearest site (that
-*is* the Voronoi diagram), additively scatter every grid pixel into its site's
-accumulator to sum weighted centroids, then divide. Nothing returns to the CPU until the
-last iteration. Sites are seeded by importance sampling the ink, so the relaxation budget
-goes into refining rather than migrating points out of the highlights.
-
-**Signed distance fields** (`src/shape/sdf.ts`, `src/shape/atlas.ts`). Shapes are
-rasterised once, converted to an SDF by an 8SSEDT sweep, and packed into a single R8
-atlas. The fragment shader antialiases from the distance with a threshold that scales
-with the drawn size, so a 2px dot on screen and the same dot at 400px in a 300dpi export
-are both correct with no regeneration. Sub-pixel points are drawn at one pixel with
-alpha carrying the lost area, which keeps dense stipples from thinning out.
-
-**Tiled export** (`src/export/png.ts`). Because point buffers are in canvas space, a 4x
-export changes only the view matrix and a size uniform. Tiles are 2048² regardless of
-output size, so print resolution does not need a proportionally large render target.
-
----
-
-## Verification
-
-```bash
-npm run typecheck
-npm test             # 45 unit tests, no browser needed
-npm run verify       # 22 end-to-end checks in headless Chromium
-```
-
-`npm test` covers the DOM-free half: the distance transform against exact Euclidean
-distances, distribution determinism and tonal response, the prefilter ordering, the
-store's invalidation levels and history coalescing, and the CPU mirror of the point
-shader that vector export relies on.
-
-`npm run verify` needs `npm run dev` running in another terminal. It drives a real
-browser through every preset, checks each one actually puts ink on the canvas, imports
-an SVG and a PNG as shapes and confirms both render and reach the vector export, proves
-a `Reads from → Layers below` layer differs from the same layer reading the source,
-round-trips all three export formats, and asserts the dirty graph does no work it should
-not. Screenshots and sample exports land in `artifacts/`.
-
-Two notes on what those numbers mean. Headless Chromium rasterises through SwiftShader,
-so wall-clock draw timings from `verify` are software-rasteriser figures and are not
-reported as GPU performance. Point generation is CPU work and is reported: a
-240,000-point stack builds in around 45ms.
-
----
-
-## Layout
-
-```
-src/
-  core/       project model, store with dirty levels, undo, seeded RNG
-  image/      decode, density map (prefilter, gradient, mips, CDF), test card
-  dist/       point generators: jittered, voronoi (GPU), halftone
-  shape/      SDF generation, atlas, rasteriser, SVG/raster import
-  gl/         context helpers, instanced point renderer, compositor
-  pipeline/   engine — owns GPU resources and every cache
-  export/     png (tiled), svg, pdf, and the shared shader mirror
-  ui/         panels, controls, shape parameters, presets
-src-tauri/    desktop shell; Rust decodes TIFF, which web views cannot
-```
+[MIT](LICENSE). Use it, change it, print with it.
