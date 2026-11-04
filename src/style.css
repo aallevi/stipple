@@ -213,10 +213,13 @@ select:hover { background: var(--hover); }
   content: '';
   position: absolute;
   inset: 16px;
-  border: 2px dashed var(--line-soft);
+  border: 2px dashed #808080;
   pointer-events: none;
 }
 .drop-zone[hidden] { display: none; }
+/* Quiet on purpose: grey on grey, no panel and no accent. It is the backdrop
+   before there is a picture, not a call to action — the orange Open button in
+   the toolbar is already that. */
 .drop-zone-inner {
   position: relative;
   z-index: 1;
@@ -225,11 +228,11 @@ select:hover { background: var(--hover); }
   align-items: center;
   gap: 10px;
   padding: 20px 28px;
-  background: var(--panel);
-  border: 1px solid var(--line);
 }
-.drop-zone-title { margin: 0; font-size: 16px; font-weight: 700; color: var(--text); }
-.drop-zone-hint { margin: 0; color: var(--text-faint); }
+.drop-zone-title { margin: 0; font-size: 15px; font-weight: 600; color: #a2a2a2; }
+.drop-zone-hint { margin: 0; color: #8f8f8f; }
+.drop-zone .btn { background: none; border-color: #8a8a8a; color: #a8a8a8; font-weight: 400; }
+.drop-zone .btn:hover { background: rgba(255, 255, 255, 0.06); color: #c4c4c4; }
 .stage.dropping .drop-zone { display: flex; background: rgba(111, 111, 111, 0.85); }
 .stage.dropping .drop-zone::after { border-color: var(--accent); }
 .stage.dropping .drop-zone-inner > * { visibility: hidden; }

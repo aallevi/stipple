@@ -45,7 +45,7 @@ export class App {
   private dropZone = h('div', { class: 'drop-zone' },
     h('div', { class: 'drop-zone-inner' },
       h('p', { class: 'drop-zone-title' }, 'Drop an image here'),
-      button('Open image\u2026', () => void this.openImage(), 'primary'),
+      button('Open image\u2026', () => void this.openImage()),
       h('p', { class: 'drop-zone-hint' }, 'PNG, JPEG, WebP or GIF. It stays on your device.'),
     ),
   );
