@@ -167,9 +167,9 @@ export class ShapesPanel {
     const alpha = rasterizeShape(def, size, this.bitmaps.get(def.id));
     const img = ctx.createImageData(size, size);
     for (let i = 0; i < alpha.length; i++) {
-      img.data[i * 4] = 235;
-      img.data[i * 4 + 1] = 238;
-      img.data[i * 4 + 2] = 242;
+      img.data[i * 4] = 28;
+      img.data[i * 4 + 1] = 28;
+      img.data[i * 4 + 2] = 28;
       img.data[i * 4 + 3] = alpha[i];
     }
     ctx.putImageData(img, 0, 0);

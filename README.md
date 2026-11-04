@@ -70,10 +70,11 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
    have something to look at.
 2. **Pick a preset** to see what's possible: *Classic stipple*, *Voronoi drawing*,
    *Three-angle screens*, *Contour lines* and others.
-3. **Work down the sidebar.** Set the layer, distribution, shape, size, rotation, ink
-   and colour. Each section only changes what's below it in the chain.
-4. **Set the document** to the size and dpi you'll print at. Every length is shown in
-   mm, inches or %, and it's the size you'll get.
+3. **Set the document** (top of the sidebar) to the size and dpi you'll print at.
+   Every length is shown in mm, inches or %, and it's the size you'll get.
+4. **Work down the sidebar.** The sections follow the signal: *Source → Image adjust →
+   Ink → Tone mask → Distribution → Shape → Size → Rotation → Colour → Transform →
+   Blend*. A setting only affects the sections below it.
 5. **Export** to PNG, SVG or PDF, or **Plates** for screen printing.
 
 ### From photo to screens

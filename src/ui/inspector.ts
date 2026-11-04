@@ -35,9 +35,12 @@ const MAX_DENSITY = 2000;
  * existing inputs. That keeps focus and scroll position stable while you drag a
  * slider, and means an undo does not tear down the panel you are working in.
  *
- * Section order follows the order you actually work in: what the layer is, where
- * the dots go, what a dot looks like, how big, which way round, what colour —
- * then the three refinement sections, collapsed until wanted.
+ * Sections run in signal-flow order, top to bottom: what the layer reads, how
+ * that is graded and measured, which tones it keeps, where the dots go, what a
+ * dot looks like, how big, which way round, what colour, where the layer sits,
+ * and finally how it composites onto the layers below. A control only ever
+ * affects the sections beneath it. The refinement stages (Image adjust, Tone
+ * mask, Transform) start collapsed.
  */
 export class Inspector {
   readonly el = h('div', { class: 'inspector' });
@@ -98,7 +101,7 @@ export class Inspector {
     const rot = defaultRotation();
 
     const sections: Control[] = [
-      section('Layer', [
+      section('Source', [
         select<'source' | 'below'>({
           label: 'Reads from',
           title: 'Sample the photo, or the composite of everything stacked underneath',
@@ -109,18 +112,98 @@ export class Inspector {
           get: () => L().input,
           set: (v) => s.updateLayer(id, { input: v }),
         }),
-        select<BlendMode>({
-          label: 'Blend mode',
-          options: BLEND_MODES.map((m) => ({ value: m, label: cap(m) })),
-          get: () => L().blend,
-          set: (v) => s.updateLayer(id, { blend: v }),
+      ]),
+
+      section('Image adjust', [
+        slider({
+          label: 'Brightness', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
+          get: () => L().prefilter.brightness,
+          set: (v) => s.updateLayerField(id, 'prefilter', { brightness: v }),
         }),
         slider({
-          label: 'Layer opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
-          get: () => L().opacity,
-          set: (v) => s.updateLayer(id, { opacity: v }),
+          label: 'Contrast', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
+          get: () => L().prefilter.contrast,
+          set: (v) => s.updateLayerField(id, 'prefilter', { contrast: v }),
         }),
-      ]),
+        slider({
+          label: 'Gamma', min: 0.1, max: 4, step: 0.01, interaction: ia, reset: 1,
+          get: () => L().prefilter.gamma,
+          set: (v) => s.updateLayerField(id, 'prefilter', { gamma: v }),
+        }),
+        lengthSlider({
+          label: 'Blur', min: 0, max: 0.1, interaction: ia, reset: 0,
+          canvas: this.store.get().canvas,
+          title: 'Softens what this layer measures, as a fraction of the picture — '
+            + 'so a blur that turns the dots below into tone keeps doing that at any size',
+          get: () => L().prefilter.blur,
+          set: (v) => s.updateLayerField(id, 'prefilter', { blur: v }),
+        }),
+        slider({
+          label: 'Sharpen', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0,
+          get: () => L().prefilter.sharpen,
+          set: (v) => s.updateLayerField(id, 'prefilter', { sharpen: v }),
+        }),
+        toggle({
+          label: 'Invert image',
+          get: () => L().prefilter.invert,
+          set: (v) => s.updateLayerField(id, 'prefilter', { invert: v }),
+        }),
+      ], true),
+
+      section('Ink', [
+        select<'luma' | 'ink' | 'flat'>({
+          label: 'Measures',
+          title: 'Overall tone, the coverage of one ink, or nothing at all',
+          options: [
+            { value: 'luma', label: 'Overall tone' },
+            { value: 'ink', label: 'One ink (separation)' },
+            { value: 'flat', label: 'Nothing (even dots)' },
+          ],
+          get: () => L().prefilter.channel ?? 'luma',
+          set: (v) => s.updateLayerField(id, 'prefilter', { channel: v }),
+        }),
+        ...(layer.prefilter.channel === 'ink' ? [
+          colorControl({
+            label: 'Ink', interaction: ia,
+            get: () => L().prefilter.ink ?? [0, 0, 0, 1],
+            set: (v) => s.updateLayerField(id, 'prefilter', { ink: v }),
+          }),
+          slider({
+            label: 'Undercolour', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+            title: 'How much of the neutral component to leave to a black plate. '
+              + '1 keeps total ink coverage printable; 0 is a naive separation',
+            get: () => L().prefilter.undercolor ?? 0,
+            set: (v) => s.updateLayerField(id, 'prefilter', { undercolor: v }),
+          }),
+          raw(button('Match the dot colour to this ink', () => {
+            const c = L().prefilter.ink ?? [0, 0, 0, 1];
+            s.updateLayerField(id, 'color', { mode: 'solid', color: c });
+          }, 'sm wide')),
+        ] : layer.prefilter.channel === 'flat' ? [
+          hint('Dots land evenly everywhere. Lightness comes from the ink each one takes, '
+            + 'which is what a spot-ink layer wants.'),
+        ] : [hint('This layer reads overall tone. Switch to an ink to make it one plate of a separation.')]),
+      ], layer.prefilter.channel !== 'ink'),
+
+      section('Tone mask', [
+        rangeControl({
+          label: 'Keep tones', interaction: ia,
+          title: 'Dots are placed only where the source tone falls inside this window',
+          get: () => L().mask.toneRange,
+          set: (v) => s.updateLayerField(id, 'mask', { toneRange: v }),
+        }),
+        slider({
+          label: 'Feather', min: 0, max: 0.5, step: 0.01, interaction: ia, reset: 0,
+          title: 'Softens the edges of the tone window',
+          get: () => L().mask.feather,
+          set: (v) => s.updateLayerField(id, 'mask', { feather: v }),
+        }),
+        toggle({
+          label: 'Invert mask',
+          get: () => L().mask.invert,
+          set: (v) => s.updateLayerField(id, 'mask', { invert: v }),
+        }),
+      ], true),
 
       section('Distribution', this.distributionControls(id)),
 
@@ -209,97 +292,6 @@ export class Inspector {
 
       section('Colour', this.colorControls(id)),
 
-      section('Tone mask', [
-        rangeControl({
-          label: 'Keep tones', interaction: ia,
-          title: 'Dots are placed only where the source tone falls inside this window',
-          get: () => L().mask.toneRange,
-          set: (v) => s.updateLayerField(id, 'mask', { toneRange: v }),
-        }),
-        slider({
-          label: 'Feather', min: 0, max: 0.5, step: 0.01, interaction: ia, reset: 0,
-          title: 'Softens the edges of the tone window',
-          get: () => L().mask.feather,
-          set: (v) => s.updateLayerField(id, 'mask', { feather: v }),
-        }),
-        toggle({
-          label: 'Invert mask',
-          get: () => L().mask.invert,
-          set: (v) => s.updateLayerField(id, 'mask', { invert: v }),
-        }),
-      ], true),
-
-      section('Ink', [
-        select<'luma' | 'ink' | 'flat'>({
-          label: 'Measures',
-          title: 'Overall tone, the coverage of one ink, or nothing at all',
-          options: [
-            { value: 'luma', label: 'Overall tone' },
-            { value: 'ink', label: 'One ink (separation)' },
-            { value: 'flat', label: 'Nothing (even dots)' },
-          ],
-          get: () => L().prefilter.channel ?? 'luma',
-          set: (v) => s.updateLayerField(id, 'prefilter', { channel: v }),
-        }),
-        ...(layer.prefilter.channel === 'ink' ? [
-          colorControl({
-            label: 'Ink', interaction: ia,
-            get: () => L().prefilter.ink ?? [0, 0, 0, 1],
-            set: (v) => s.updateLayerField(id, 'prefilter', { ink: v }),
-          }),
-          slider({
-            label: 'Undercolour', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
-            title: 'How much of the neutral component to leave to a black plate. '
-              + '1 keeps total ink coverage printable; 0 is a naive separation',
-            get: () => L().prefilter.undercolor ?? 0,
-            set: (v) => s.updateLayerField(id, 'prefilter', { undercolor: v }),
-          }),
-          raw(button('Match the dot colour to this ink', () => {
-            const c = L().prefilter.ink ?? [0, 0, 0, 1];
-            s.updateLayerField(id, 'color', { mode: 'solid', color: c });
-          }, 'sm wide')),
-        ] : layer.prefilter.channel === 'flat' ? [
-          hint('Dots land evenly everywhere. Lightness comes from the ink each one takes, '
-            + 'which is what a spot-ink layer wants.'),
-        ] : [hint('This layer reads overall tone. Switch to an ink to make it one plate of a separation.')]),
-      ], layer.prefilter.channel !== 'ink'),
-
-      section('Image adjust', [
-        slider({
-          label: 'Brightness', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
-          get: () => L().prefilter.brightness,
-          set: (v) => s.updateLayerField(id, 'prefilter', { brightness: v }),
-        }),
-        slider({
-          label: 'Contrast', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
-          get: () => L().prefilter.contrast,
-          set: (v) => s.updateLayerField(id, 'prefilter', { contrast: v }),
-        }),
-        slider({
-          label: 'Gamma', min: 0.1, max: 4, step: 0.01, interaction: ia, reset: 1,
-          get: () => L().prefilter.gamma,
-          set: (v) => s.updateLayerField(id, 'prefilter', { gamma: v }),
-        }),
-        lengthSlider({
-          label: 'Blur', min: 0, max: 0.1, interaction: ia, reset: 0,
-          canvas: this.store.get().canvas,
-          title: 'Softens what this layer measures, as a fraction of the picture — '
-            + 'so a blur that turns the dots below into tone keeps doing that at any size',
-          get: () => L().prefilter.blur,
-          set: (v) => s.updateLayerField(id, 'prefilter', { blur: v }),
-        }),
-        slider({
-          label: 'Sharpen', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0,
-          get: () => L().prefilter.sharpen,
-          set: (v) => s.updateLayerField(id, 'prefilter', { sharpen: v }),
-        }),
-        toggle({
-          label: 'Invert image',
-          get: () => L().prefilter.invert,
-          set: (v) => s.updateLayerField(id, 'prefilter', { invert: v }),
-        }),
-      ], true),
-
       section('Transform', [
         slider({
           label: 'Scale', min: 0.1, max: 4, step: 0.01, interaction: ia, unit: '×', reset: 1,
@@ -337,6 +329,20 @@ export class Inspector {
           set: (v) => s.updateLayerField(id, 'transform', { flipY: v }),
         }),
       ], true),
+
+      section('Blend', [
+        select<BlendMode>({
+          label: 'Blend mode',
+          options: BLEND_MODES.map((m) => ({ value: m, label: cap(m) })),
+          get: () => L().blend,
+          set: (v) => s.updateLayer(id, { blend: v }),
+        }),
+        slider({
+          label: 'Layer opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+          get: () => L().opacity,
+          set: (v) => s.updateLayer(id, { opacity: v }),
+        }),
+      ]),
     ];
 
     this.controls = sections;
@@ -400,7 +406,7 @@ export class Inspector {
           // means the same on a thumbnail and a poster, and wide enough that
           // both a dozen marks and two thousand are one drag away.
           label: 'Density', min: MIN_DENSITY, max: MAX_DENSITY, step: 1,
-          curve: 'log', interaction: ia, reset: 256, unit: 'across',
+          curve: 'log', interaction: ia, reset: 256,
           title: 'How many dots fit across the short edge of the picture. '
             + 'A proportion of the image, not a distance in pixels, so it survives '
             + 'a resize and does not depend on the resolution you opened',

@@ -195,10 +195,12 @@ export class App {
       ),
       h('main', { class: 'main' },
         h('div', { class: 'stage' }, this.canvas, this.hud, this.toast),
+        // Global first, then the stack, then the selected layer's chain: the
+        // sidebar narrows from the whole document down to one layer.
         h('aside', { class: 'sidebar' },
+          this.document.el,
           this.layers.el,
           this.inspector.el,
-          this.document.el,
         ),
       ),
     );

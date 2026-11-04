@@ -1,6 +1,7 @@
 # Stipple — the guide
 
-Everything the sidebar does, in the order you meet it. For install and a quick start,
+Everything the sidebar does. The panel itself runs in signal-flow order, from Document
+and the layer stack down to Blend. For install and a quick start,
 see the [README](../README.md); for how the engine works, see [ARCHITECTURE](ARCHITECTURE.md).
 
 ## The layer stack
