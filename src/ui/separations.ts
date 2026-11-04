@@ -17,7 +17,7 @@ import { inkName } from '../export/plates';
  * as a rosette instead, and yellow goes at 0° because it is the weakest ink and
  * shows a pattern least.
  */
-const ANGLES = [15, 75, 0, 45, 30, 60, 90, 22.5];
+export const ANGLES = [15, 75, 0, 45, 30, 60, 90, 22.5];
 
 /** Process-ink approximations, chosen so an on-screen multiply reads as the print. */
 const CYAN: RGBA = [0.0, 0.67, 0.93, 1];
@@ -173,7 +173,7 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
 }
 
 /** A plate whose ink is close enough to neutral to carry the greys. */
-function isNeutral(c: RGBA): boolean {
+export function isNeutral(c: RGBA): boolean {
   return Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) < 0.12
     && Math.max(c[0], c[1], c[2]) < 0.35;
 }

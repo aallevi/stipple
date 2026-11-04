@@ -338,8 +338,7 @@ select:hover { background: var(--hover); }
 
 /* -- layers -------------------------------------------------------------- */
 
-.separate-row { padding: 6px 8px 0; }
-.separate-select { width: 100%; }
+.make-print-select { width: 100%; }
 
 .layer-list {
   padding: 6px 8px;

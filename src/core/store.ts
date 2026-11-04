@@ -284,6 +284,18 @@ export class Store {
     this.schedule();
   }
 
+  /** Insert a new group's layers at an index of the stack, as one undo step. */
+  insertGroup(layers: Layer[], group: LayerGroup, at: number): void {
+    this.commit(`insert-group:${group.id}`);
+    const i = Math.max(0, Math.min(at, this.project.layers.length));
+    this.project.layers.splice(i, 0, ...layers);
+    this.project.groups = [...(this.project.groups ?? []), group];
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    this.pending.global = worst(this.pending.global, Dirty.All);
+    this.schedule();
+  }
+
   /** Dissolve a group, keeping its layers where they are. */
   ungroup(id: string): void {
     this.commit(`ungroup:${id}`);

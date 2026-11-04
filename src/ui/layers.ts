@@ -1,14 +1,8 @@
-import { extractPalette } from '../core/color';
 import { defaultLayer, uid } from '../core/defaults';
 import { groupMembers, groupSpan } from '../core/groups';
 import type { Store } from '../core/store';
 import type { Layer, LayerGroup } from '../core/types';
-import type { ImageSource } from '../image/density';
 import { button, h } from './controls';
-import { buildColourLayers, buildSeparation, SEPARATIONS } from './separations';
-
-const RESTORE = '__restore';
-const FROM_PICTURE = 'picture:';
 
 /**
  * The layer stack, with groups.
@@ -33,19 +27,9 @@ export class LayersPanel {
   selectedGroup: string | null = null;
   /** Says, while a group is selected, that edits reach all of it. */
   private groupNote = h('p', { class: 'link-note', hidden: '' });
-  /**
-   * The stack as it was before the first split, so there is a way back that
-   * does not depend on undo. Undo gets there too, but only by also unwinding
-   * every edit made since — and nothing on screen says it would work at all.
-   */
-  private beforeSeparation: { layers: Layer[]; groups: LayerGroup[] } | null = null;
-  private refreshSeparateMenu: () => void = () => {};
-
   constructor(
     private store: Store,
     private onSelect: (id: string) => void,
-    /** The photograph, for finding the colours a picture is made of. */
-    private getSource: () => ImageSource | null = () => null,
   ) {
     this.el.append(
       h('div', { class: 'panel-head' },
@@ -58,7 +42,6 @@ export class LayersPanel {
           button('−', () => this.remove(), 'icon', 'Delete the selected layer or group'),
         ),
       ),
-      this.separateMenu(),
       this.list,
       h('div', { class: 'link-row' }, this.groupNote),
     );
@@ -86,83 +69,6 @@ export class LayersPanel {
     // up means naming the slot one past the neighbour being passed.
     this.store.moveLayer(this.selected!, delta > 0 ? to + 1 : to);
     this.render();
-  }
-
-  /**
-   * Replace the stack with one layer per ink, in a group.
-   *
-   * A whole-stack operation rather than a per-layer setting, because a
-   * separation only means anything as a set: the plates have to agree on their
-   * screen angles, and the colours of a picture have to agree on who owns which
-   * part of it.
-   */
-  private separateMenu(): HTMLElement {
-    const sel = h('select', { class: 'separate-select' }) as HTMLSelectElement;
-    const options = (): void => {
-      sel.replaceChildren(h('option', { value: '' }, 'Split into ink plates…'));
-      if (this.beforeSeparation) {
-        sel.append(h('option', { value: RESTORE },
-          `↩ Back to the ${this.beforeSeparation.layers.length}-layer stack from before`));
-      }
-      const picture = h('optgroup', { label: 'Stipple, one layer per colour of the picture' });
-      for (let n = 2; n <= 8; n++) picture.append(h('option', { value: `${FROM_PICTURE}${n}` }, `From the picture · ${n} colours`));
-      const plates = h('optgroup', { label: 'Halftone plates, overprinting' });
-      for (const [key, kind] of Object.entries(SEPARATIONS)) plates.append(h('option', { value: key }, kind.label));
-      sel.append(picture, plates);
-    };
-    this.refreshSeparateMenu = options;
-    options();
-
-    sel.addEventListener('change', () => {
-      const choice = sel.value;
-      sel.value = '';
-      const project = this.store.get();
-      if (choice === RESTORE) {
-        if (!this.beforeSeparation) return;
-        this.store.replaceLayers(this.beforeSeparation.layers, this.beforeSeparation.groups);
-        this.beforeSeparation = null;
-        options();
-        this.render();
-        this.select(this.store.get().layers[this.store.get().layers.length - 1].id);
-        return;
-      }
-
-      const group: LayerGroup = { id: uid('group'), name: '', collapsed: false };
-      let layers: Layer[];
-      if (choice.startsWith(FROM_PICTURE)) {
-        const src = this.getSource();
-        const n = Number(choice.slice(FROM_PICTURE.length));
-        const paper = project.canvas.background;
-        const colours = src ? extractPalette(src, n, paper) : [];
-        if (!colours.length) return;
-        group.name = 'Spot colours';
-        layers = buildColourLayers(colours, group.id);
-      } else {
-        const kind = SEPARATIONS[choice];
-        if (!kind) return;
-        group.name = kind.label.replace(/\s*\(.*\)$/, '');
-        layers = buildSeparation(kind, project.canvas).map((l) => ({ ...l, groupId: group.id }));
-      }
-      // Keep the first stack only: splitting into CMYK and then trying the
-      // picture's colours should still lead back to where you started.
-      if (!this.beforeSeparation) {
-        this.beforeSeparation = { layers: structuredClone(project.layers), groups: structuredClone(project.groups ?? []) };
-      }
-      this.store.replaceLayers(layers, [group]);
-      options();
-      // A set is edited as a set to begin with: select the group.
-      this.selectGroup(group.id);
-    });
-    return h('div', { class: 'separate-row' }, sel);
-  }
-
-  /**
-   * Drop the remembered pre-split stack, for when the document is replaced
-   * wholesale (a preset, a loaded project) and that stack no longer belongs to it.
-   */
-  forgetSeparation(): void {
-    this.beforeSeparation = null;
-    this.refreshSeparateMenu();
   }
 
   add(): void {

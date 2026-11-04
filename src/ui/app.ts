@@ -12,6 +12,7 @@ import { Engine } from '../pipeline/engine';
 import { decodeNative, isTauri, openFile, saveFile, saveFiles, supportedImageExtensions, type PickedFile } from '../platform';
 import { rasterBitmap } from '../shape/import';
 import { button, colorControl, h, raw, readout, section, select, slider, type Control, type Interaction, installTouchSliders } from './controls';
+import { InksPanel } from './inks';
 import { Inspector } from './inspector';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
@@ -30,6 +31,7 @@ export class App {
   private store = new Store(defaultProject());
   private canvas = h('canvas', { class: 'viewport' }) as HTMLCanvasElement;
   private engine: Engine;
+  private inks!: InksPanel;
   private layers: LayersPanel;
   private shapes: ShapesPanel;
   private inspector: Inspector;
@@ -75,7 +77,8 @@ export class App {
       // told directly which of its tiles is now the current one.
       this.shapes.setSelected(this.store.layer(id)?.shapeId);
       this.inspector.update(id);
-    }, () => this.engine.sourceImage);
+      this.inks.update();
+    });
     this.shapes = new ShapesPanel(
       this.store,
       (id, bmp) => {
@@ -93,8 +96,16 @@ export class App {
       this.engine.voronoiAvailable,
       () => this.engine.sourceImage,
       (done) => this.pickColour(done),
-      (gid) => this.layers.selectGroup(gid),
+      (layerId) => this.inks.make('spot', 3, layerId),
     );
+    this.inks = new InksPanel(this.store, this.interaction, {
+      getSource: () => this.engine.sourceImage,
+      pickColour: (done) => this.pickColour(done),
+      selection: () => ({ layer: this.layers.selected, group: this.layers.selectedGroup }),
+      selectGroup: (gid) => this.layers.selectGroup(gid),
+      exportPlates: () => void this.doExportPlates(),
+      notify: (m, e) => this.notify(m, e),
+    });
 
     root.append(this.buildLayout());
     this.toolbarAnchor = this.compare.el.previousElementSibling;
@@ -113,6 +124,7 @@ export class App {
       if (change.shapes) this.shapes.render(this.selectedShapeId());
       else this.shapes.setSelected(this.selectedShapeId());
       this.inspector.update(this.layers.selected);
+      this.inks.update();
       // Undo, a preset and a freshly opened image all rewrite the canvas
       // settings without going through those controls, so push the values back.
       if (change.global) this.document.sync();
@@ -153,7 +165,6 @@ export class App {
         const preset = PRESETS.find((p) => p.name === name);
         if (!preset) return false;
         const project = this.store.get();
-        this.layers.forgetSeparation();
         this.store.load({
           ...preset.build(project.canvas.width, project.canvas.height),
           shapes: project.shapes,
@@ -177,7 +188,6 @@ export class App {
       const preset = PRESETS.find((p) => p.name === presetSel.value);
       if (!preset) return;
       const project = this.store.get();
-      this.layers.forgetSeparation();
       this.store.load({
         ...preset.build(project.canvas.width, project.canvas.height),
         shapes: project.shapes,
@@ -236,6 +246,7 @@ export class App {
         // sidebar narrows from the whole document down to one layer.
         h('aside', { class: 'sidebar' },
           this.document.el,
+          this.inks.el,
           this.layers.el,
           this.inspector.el,
         ),
@@ -988,7 +999,6 @@ export class App {
       const ids = new Set(project.shapes.map((s) => s.id));
       project.shapes = [...BUILTIN_SHAPES.filter((s) => !ids.has(s.id)), ...project.shapes];
 
-      this.layers.forgetSeparation();
       this.store.load(project);
       // Raster shapes carry their pixels as data URLs; decode them before the
       // atlas tries to build distance fields.

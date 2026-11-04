@@ -82,19 +82,24 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
 
 ### From photo to screens
 
-- **Spot inks.** Set *Colour → Spot inks* and the layer becomes a **group, one layer
-  per ink**, each drawing only where the picture is closest to its colour, so the screens
-  fit together like a puzzle. *Sample the colours*, *Posterise the tones*, or tap
-  *Pick a colour from the picture* for a small detail the sampling missed. Select the
-  group to edit every ink at once, or one layer to give that ink its own shape, size or
-  pattern. *Split into ink plates… → From the picture* does the same in one step.
-- **Overprinting plates.** Choose *Split into ink plates…* above the layer list to rebuild
-  the stack as a group of halftone plates, one per ink (CMYK, CMY, RGB, risograph, earth, tritone or
-  duotone), each with its own screen angle. Any plate can be switched to stippling, and
-  the same menu offers *↩ Back to the stack from before*.
-- **Plates.** The *Plates* button writes one SVG film per ink, solid black on white,
-  plus a colour proof. Every film has identical registration marks. It lists the
-  screens it found before writing anything.
+Everything about the print lives in **Inks & plates**, at the top of the sidebar. A print
+is a group of layers, one per ink.
+
+- **Make one.** *Make from the selected layer…* turns that layer into a group of
+  **spot colours** (2–8 inks found in the picture) or **overprinting plates** (CMYK, CMY,
+  RGB, risograph, earth, tritone, duotone). *Colour → Spot inks* does the first too. With
+  a print already in hand, the same menu adds a second group beside it instead.
+- **Spot colours** sit side by side: each ink owns the part of the picture closest to its
+  colour, so screens never overprint. **Overprinting plates** print over each other and
+  mix, as process printing does. *Inks print* switches a group between the two and keeps
+  its inks.
+- **Edit the inks.** Each swatch is one ink layer: recolour it, or press its *×* to remove
+  that ink. *Sample the colours*, *Posterise the tones*, an ink set, or *Pick a colour
+  from the picture* for a small detail the sampling missed — picked inks stay when you
+  sample again. Select the group to change every ink at once, or one layer to give that
+  ink its own shape, size or pattern.
+- **Export plates** writes one SVG film per ink, solid black on white, plus a colour
+  proof, with identical registration marks on every film.
 
 ### Layers and groups
 

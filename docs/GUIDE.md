@@ -128,10 +128,9 @@ select it to edit them together, or select one to edit it alone. It changes how 
 not what prints.
 
 So a set of screens is always a group of layers, one per ink, and the two kinds differ
-only in how each layer measures. *Spot colours* — Colour → Spot inks, or Split → From the
-picture — use **Closest colour**: each layer owns the part of the picture nearest its ink,
-so the screens never print on top of each other. *Overprinting plates* — Split → CMYK and
-friends — use **One ink**: each layer measures how much of its ink the picture needs, so
+only in how each layer measures. All of it is made and edited in the **Inks & plates**
+panel at the top of the sidebar. *Spot colours* use **Closest colour**: each layer owns the part of the picture nearest its ink,
+so the screens never print on top of each other. *Overprinting plates* use **One ink**: each layer measures how much of its ink the picture needs, so
 the inks overprint and mix on the paper, the way process printing works.
 
 **Compare** — the small panel at the top right of the canvas. *Drawing* is the work,
@@ -175,20 +174,20 @@ layer — recolour it and that layer changes; change `Inks` and layers are added
 The readout under the swatches says what share of the paper each screen would cover —
 the number that decides whether an ink is worth the pull. Select one layer of the group
 to give that ink its own shape, size, density or pattern: bigger dots for the shadows,
-lines for one colour. *Split into ink plates… → From the picture · N colours* builds the
-same group in one step.
+lines for one colour. Inks & plates → *Make from the selected layer… → N colours* builds the
+same group in one step, and with a print already in hand it adds a second group beside
+it rather than replacing anything.
 
 A single-layer spot-ink layer from an older project still prints as it did, and offers
 *Turn into a colour group*.
 
-**Overprinting plates — one layer per ink, inks that mix.** `Split into ink plates…`
-at the top of the layer stack replaces the stack with a group of halftone plates, one per ink: CMYK, CMY, RGB, risograph,
+**Overprinting plates — one layer per ink, inks that mix.** Inks & plates → *Make from
+the selected layer…* turns it into a group of halftone plates, one per ink: CMYK, CMY, RGB, risograph,
 earth, tritone or duotone. Here each layer *measures* the coverage of its own ink and
 prints solid in it; the plates multiply, carry the classic 30°-apart screen angles, and only the black
 plate carries the neutrals, so total ink coverage stays printable. Each plate is an
 ordinary layer afterwards — change its ink, its shape, or switch its screen to Stochastic
-or Voronoi for a stippled plate. The same menu then offers `↩ Back to the stack from
-before`, which restores the layers you had before the first split.
+or Voronoi for a stippled plate. *Inks print* switches a group between overprinting plates and spot colours, keeping its inks; undo, or deleting the group, takes you back.
 
 Use spot colours when you choose the colours and want flat, hand-printed areas. Use
 overprinting plates when you want a faithful reproduction from C, M, Y and K.
