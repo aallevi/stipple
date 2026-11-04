@@ -110,25 +110,25 @@ export class Inspector {
             { value: 'below', label: 'Layers below' },
           ],
           get: () => L().input,
-          set: (v) => s.updateLayer(id, { input: v }),
+          set: (v) => s.editLayer(id, { input: v }),
         }),
-      ]),
+      ], false, [], 'Where this layer looks to decide where its dots go. Source image is your photo. Layers below is the finished drawing of every layer under this one, so this layer can follow the ink already laid down \u2014 blur it a little in Image adjust and the dots below turn into smooth tone to draw over.'),
 
       section('Image adjust', [
         slider({
           label: 'Brightness', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
           get: () => L().prefilter.brightness,
-          set: (v) => s.updateLayerField(id, 'prefilter', { brightness: v }),
+          set: (v) => s.editLayerField(id, 'prefilter', { brightness: v }),
         }),
         slider({
           label: 'Contrast', min: -1, max: 1, step: 0.01, interaction: ia, reset: 0,
           get: () => L().prefilter.contrast,
-          set: (v) => s.updateLayerField(id, 'prefilter', { contrast: v }),
+          set: (v) => s.editLayerField(id, 'prefilter', { contrast: v }),
         }),
         slider({
           label: 'Gamma', min: 0.1, max: 4, step: 0.01, interaction: ia, reset: 1,
           get: () => L().prefilter.gamma,
-          set: (v) => s.updateLayerField(id, 'prefilter', { gamma: v }),
+          set: (v) => s.editLayerField(id, 'prefilter', { gamma: v }),
         }),
         lengthSlider({
           label: 'Blur', min: 0, max: 0.1, interaction: ia, reset: 0,
@@ -136,72 +136,72 @@ export class Inspector {
           title: 'Softens what this layer measures, as a fraction of the picture — '
             + 'so a blur that turns the dots below into tone keeps doing that at any size',
           get: () => L().prefilter.blur,
-          set: (v) => s.updateLayerField(id, 'prefilter', { blur: v }),
+          set: (v) => s.editLayerField(id, 'prefilter', { blur: v }),
         }),
         slider({
           label: 'Sharpen', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0,
           get: () => L().prefilter.sharpen,
-          set: (v) => s.updateLayerField(id, 'prefilter', { sharpen: v }),
+          set: (v) => s.editLayerField(id, 'prefilter', { sharpen: v }),
         }),
         toggle({
           label: 'Invert image',
           get: () => L().prefilter.invert,
-          set: (v) => s.updateLayerField(id, 'prefilter', { invert: v }),
+          set: (v) => s.editLayerField(id, 'prefilter', { invert: v }),
         }),
       ], true),
 
-      section('Ink', [
+      section('Measure', [
         select<'luma' | 'ink' | 'flat'>({
-          label: 'Measures',
+          label: 'Responds to',
           title: 'Overall tone, the coverage of one ink, or nothing at all',
           options: [
             { value: 'luma', label: 'Overall tone' },
-            { value: 'ink', label: 'One ink (separation)' },
+            { value: 'ink', label: 'One ink (makes this layer a plate)' },
             { value: 'flat', label: 'Nothing (even dots)' },
           ],
           get: () => L().prefilter.channel ?? 'luma',
-          set: (v) => s.updateLayerField(id, 'prefilter', { channel: v }),
+          set: (v) => s.editLayerField(id, 'prefilter', { channel: v }),
         }),
         ...(layer.prefilter.channel === 'ink' ? [
           colorControl({
-            label: 'Ink', interaction: ia,
+            label: 'Which ink', interaction: ia,
             get: () => L().prefilter.ink ?? [0, 0, 0, 1],
-            set: (v) => s.updateLayerField(id, 'prefilter', { ink: v }),
+            set: (v) => s.editLayerField(id, 'prefilter', { ink: v }),
           }),
           slider({
             label: 'Undercolour', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
             title: 'How much of the neutral component to leave to a black plate. '
               + '1 keeps total ink coverage printable; 0 is a naive separation',
             get: () => L().prefilter.undercolor ?? 0,
-            set: (v) => s.updateLayerField(id, 'prefilter', { undercolor: v }),
+            set: (v) => s.editLayerField(id, 'prefilter', { undercolor: v }),
           }),
           raw(button('Match the dot colour to this ink', () => {
             const c = L().prefilter.ink ?? [0, 0, 0, 1];
-            s.updateLayerField(id, 'color', { mode: 'solid', color: c });
+            s.editLayerField(id, 'color', { mode: 'solid', color: c });
           }, 'sm wide')),
         ] : layer.prefilter.channel === 'flat' ? [
           hint('Dots land evenly everywhere. Lightness comes from the ink each one takes, '
             + 'which is what a spot-ink layer wants.'),
         ] : [hint('This layer reads overall tone. Switch to an ink to make it one plate of a separation.')]),
-      ], layer.prefilter.channel !== 'ink'),
+      ], layer.prefilter.channel !== 'ink', [], 'What this layer responds to in what it reads. Overall tone puts dots where it is dark. One ink puts dots where the picture needs that particular ink, which makes the layer one plate of a separation. Nothing spreads dots evenly and leaves the colour choice to the Colour section. This decides where dots go, not what colour they print.'),
 
       section('Tone mask', [
         rangeControl({
           label: 'Keep tones', interaction: ia,
           title: 'Dots are placed only where the source tone falls inside this window',
           get: () => L().mask.toneRange,
-          set: (v) => s.updateLayerField(id, 'mask', { toneRange: v }),
+          set: (v) => s.editLayerField(id, 'mask', { toneRange: v }),
         }),
         slider({
           label: 'Feather', min: 0, max: 0.5, step: 0.01, interaction: ia, reset: 0,
           title: 'Softens the edges of the tone window',
           get: () => L().mask.feather,
-          set: (v) => s.updateLayerField(id, 'mask', { feather: v }),
+          set: (v) => s.editLayerField(id, 'mask', { feather: v }),
         }),
         toggle({
           label: 'Invert mask',
           get: () => L().mask.invert,
-          set: (v) => s.updateLayerField(id, 'mask', { invert: v }),
+          set: (v) => s.editLayerField(id, 'mask', { invert: v }),
         }),
       ], true),
 
@@ -227,7 +227,7 @@ export class Inspector {
             // Scale the whole ramp: the spread is what the user set, so moving
             // the master must not quietly change how much tone matters.
             const spread = toneSpread(L());
-            s.updateLayerField(id, 'size', { max: v, min: v * (1 - spread), fromTone: 1 });
+            s.editLayerField(id, 'size', { max: v, min: v * (1 - spread), fromTone: 1 });
           },
         }),
         slider({
@@ -236,7 +236,7 @@ export class Inspector {
           get: () => toneSpread(L()),
           set: (v) => {
             const max = L().size.max;
-            s.updateLayerField(id, 'size', { min: max * (1 - v), fromTone: 1 });
+            s.editLayerField(id, 'size', { min: max * (1 - v), fromTone: 1 });
           },
         }),
         readout(() => {
@@ -252,19 +252,19 @@ export class Inspector {
             + '0.5 makes its area track tone, which is what a halftone needs to print '
             + 'a 50% grey as 50% grey',
           get: () => L().size.gamma ?? 1,
-          set: (v) => s.updateLayerField(id, 'size', { gamma: v }),
+          set: (v) => s.editLayerField(id, 'size', { gamma: v }),
         }),
         slider({
           label: 'Size jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: size.jitter,
           title: 'Random size variation per mark',
           get: () => L().size.jitter,
-          set: (v) => s.updateLayerField(id, 'size', { jitter: v }),
+          set: (v) => s.editLayerField(id, 'size', { jitter: v }),
         }),
         toggle({
           label: 'Swap light / dark',
           title: 'Put the big marks in the highlights instead of the shadows',
           get: () => L().size.invert,
-          set: (v) => s.updateLayerField(id, 'size', { invert: v }),
+          set: (v) => s.editLayerField(id, 'size', { invert: v }),
         }),
       ]),
 
@@ -273,35 +273,35 @@ export class Inspector {
           label: 'Angle', min: -180, max: 180, step: 1, interaction: ia, unit: '°', reset: rot.base,
           title: 'Turns every dot by the same amount',
           get: () => L().rotation.base,
-          set: (v) => s.updateLayerField(id, 'rotation', { base: v }),
+          set: (v) => s.editLayerField(id, 'rotation', { base: v }),
         }),
         slider({
           label: 'Randomness', min: 0, max: 1, step: 0.01, interaction: ia, reset: rot.random,
           title: 'Random turn per dot, up to a full revolution at 1',
           get: () => L().rotation.random,
-          set: (v) => s.updateLayerField(id, 'rotation', { random: v }),
+          set: (v) => s.editLayerField(id, 'rotation', { random: v }),
         }),
         slider({
           label: 'Follow contours', min: 0, max: 1, step: 0.01, interaction: ia,
           reset: rot.followGradient,
           title: 'Aligns dots to the image contours — most visible with line shapes',
           get: () => L().rotation.followGradient,
-          set: (v) => s.updateLayerField(id, 'rotation', { followGradient: v }),
+          set: (v) => s.editLayerField(id, 'rotation', { followGradient: v }),
         }),
       ]),
 
-      section('Colour', this.colorControls(id)),
+      section('Colour', this.colorControls(id), false, [], 'The ink each dot prints with. Solid is one ink for the whole layer \u2014 the usual choice for a plate. Spot inks lets one layer print with several: every dot picks one of your inks, so one layer can make a whole multi-screen print by itself.'),
 
       section('Transform', [
         slider({
           label: 'Scale', min: 0.1, max: 4, step: 0.01, interaction: ia, unit: '×', reset: 1,
           get: () => L().transform.scale,
-          set: (v) => s.updateLayerField(id, 'transform', { scale: v }),
+          set: (v) => s.editLayerField(id, 'transform', { scale: v }),
         }),
         slider({
           label: 'Rotate', min: -180, max: 180, step: 1, interaction: ia, unit: '°', reset: 0,
           get: () => L().transform.rotate,
-          set: (v) => s.updateLayerField(id, 'transform', { rotate: v }),
+          set: (v) => s.editLayerField(id, 'transform', { rotate: v }),
         }),
         // Half the picture each way, whatever size the picture is — a nudge
         // that shifted a layer by a quarter of a small document used to shift it
@@ -310,23 +310,23 @@ export class Inspector {
           label: 'Offset X', min: -0.5, max: 0.5, interaction: ia, reset: 0,
           canvas: this.store.get().canvas,
           get: () => L().transform.offsetX,
-          set: (v) => s.updateLayerField(id, 'transform', { offsetX: v }),
+          set: (v) => s.editLayerField(id, 'transform', { offsetX: v }),
         }),
         lengthSlider({
           label: 'Offset Y', min: -0.5, max: 0.5, interaction: ia, reset: 0,
           canvas: this.store.get().canvas,
           get: () => L().transform.offsetY,
-          set: (v) => s.updateLayerField(id, 'transform', { offsetY: v }),
+          set: (v) => s.editLayerField(id, 'transform', { offsetY: v }),
         }),
         toggle({
           label: 'Flip horizontally',
           get: () => L().transform.flipX,
-          set: (v) => s.updateLayerField(id, 'transform', { flipX: v }),
+          set: (v) => s.editLayerField(id, 'transform', { flipX: v }),
         }),
         toggle({
           label: 'Flip vertically',
           get: () => L().transform.flipY,
-          set: (v) => s.updateLayerField(id, 'transform', { flipY: v }),
+          set: (v) => s.editLayerField(id, 'transform', { flipY: v }),
         }),
       ], true),
 
@@ -335,14 +335,14 @@ export class Inspector {
           label: 'Blend mode',
           options: BLEND_MODES.map((m) => ({ value: m, label: cap(m) })),
           get: () => L().blend,
-          set: (v) => s.updateLayer(id, { blend: v }),
+          set: (v) => s.editLayer(id, { blend: v }),
         }),
         slider({
           label: 'Layer opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
           get: () => L().opacity,
-          set: (v) => s.updateLayer(id, { opacity: v }),
+          set: (v) => s.editLayer(id, { opacity: v }),
         }),
-      ]),
+      ], false, [], 'How this layer lands on the layers below it. Multiply darkens like real ink over ink, which is what plates use. Opacity fades the whole layer.'),
     ];
 
     this.controls = sections;
@@ -369,7 +369,7 @@ export class Inspector {
       get: () => L().distribution.algo,
       set: (v) => {
         if (v === L().distribution.algo) return;
-        s.updateLayer(id, { distribution: defaultDistribution(v) });
+        s.editLayer(id, { distribution: defaultDistribution(v) });
       },
     });
 
@@ -377,7 +377,7 @@ export class Inspector {
       label: 'Seed', min: 1, max: 9999, step: 1,
       title: 'Re-rolls the randomness without changing any other setting',
       get: () => (L().distribution as JitteredParams).seed,
-      set: (v) => s.updateLayerField(id, 'distribution', { seed: Math.round(v) } as never),
+      set: (v) => s.editLayerField(id, 'distribution', { seed: Math.round(v) } as never),
     });
 
     const tail = (withSeed: boolean): Control[] => [
@@ -385,13 +385,13 @@ export class Inspector {
         label: 'Tone range', interaction: ia,
         title: 'Tones outside this window get no dots at all',
         get: () => L().distribution.toneRange,
-        set: (v) => s.updateLayerField(id, 'distribution', { toneRange: v } as never),
+        set: (v) => s.editLayerField(id, 'distribution', { toneRange: v } as never),
       }),
       toggle({
         label: 'Stipple the lights',
         title: 'Place dots in the highlights instead of the shadows',
         get: () => L().distribution.invertDensity,
-        set: (v) => s.updateLayerField(id, 'distribution', { invertDensity: v } as never),
+        set: (v) => s.editLayerField(id, 'distribution', { invertDensity: v } as never),
       }),
       ...(withSeed ? [seed()] : []),
     ];
@@ -411,7 +411,7 @@ export class Inspector {
             + 'A proportion of the image, not a distance in pixels, so it survives '
             + 'a resize and does not depend on the resolution you opened',
           get: () => d().density,
-          set: (v) => s.updateLayerField(id, 'distribution', { density: Math.round(v) } as never),
+          set: (v) => s.editLayerField(id, 'distribution', { density: Math.round(v) } as never),
         }),
         readout(() => {
           const c = this.store.get().canvas;
@@ -426,19 +426,19 @@ export class Inspector {
           label: 'Tone steps', min: 1, max: 64, step: 1, interaction: ia, reset: 12,
           title: 'Number of discrete tone bands; higher is smoother',
           get: () => d().phases,
-          set: (v) => s.updateLayerField(id, 'distribution', { phases: v } as never),
+          set: (v) => s.editLayerField(id, 'distribution', { phases: v } as never),
         }),
         slider({
           label: 'Position jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0.85,
           title: '0 is a perfect grid, 1 scatters each dot anywhere in its cell',
           get: () => d().jitter,
-          set: (v) => s.updateLayerField(id, 'distribution', { jitter: v } as never),
+          set: (v) => s.editLayerField(id, 'distribution', { jitter: v } as never),
         }),
         slider({
           label: 'Overpaint', min: 0, max: 4, step: 1, interaction: ia, reset: 0,
           title: 'Extra offset passes layered over the first',
           get: () => d().overpaint,
-          set: (v) => s.updateLayerField(id, 'distribution', { overpaint: v } as never),
+          set: (v) => s.editLayerField(id, 'distribution', { overpaint: v } as never),
         }),
         ...tail(true),
       ];
@@ -458,19 +458,19 @@ export class Inspector {
           title: 'How many dots the relaxation starts with. Independent of the '
             + 'document size, so this is the same drawing at any resolution',
           get: () => d().points,
-          set: (v) => s.updateLayerField(id, 'distribution', { points: Math.round(v) } as never),
+          set: (v) => s.editLayerField(id, 'distribution', { points: Math.round(v) } as never),
         }),
         slider({
           label: 'Relaxation', min: 0, max: 60, step: 1, interaction: ia, reset: 16,
           title: 'Lloyd iterations — higher is more evenly spaced',
           get: () => d().iterations,
-          set: (v) => s.updateLayerField(id, 'distribution', { iterations: v } as never),
+          set: (v) => s.editLayerField(id, 'distribution', { iterations: v } as never),
         }),
         slider({
           label: 'Density curve', min: 0.5, max: 4, step: 0.05, interaction: ia, reset: 1.6,
           title: 'Above 1 pushes dots harder into the shadows',
           get: () => d().gamma,
-          set: (v) => s.updateLayerField(id, 'distribution', { gamma: v } as never),
+          set: (v) => s.editLayerField(id, 'distribution', { gamma: v } as never),
         }),
         ...tail(true),
       ];
@@ -487,7 +487,7 @@ export class Inspector {
           + 'so enlarging the document puts more cells across the image, exactly as '
           + 'enlarging the print would',
         get: () => d().lineature,
-        set: (v) => s.updateLayerField(id, 'distribution', { lineature: v } as never),
+        set: (v) => s.editLayerField(id, 'distribution', { lineature: v } as never),
       }),
       readout(() => {
         const c = this.store.get().canvas;
@@ -498,7 +498,7 @@ export class Inspector {
       slider({
         label: 'Screen angle', min: -180, max: 180, step: 0.5, interaction: ia, unit: '°', reset: 45,
         get: () => d().angle,
-        set: (v) => s.updateLayerField(id, 'distribution', { angle: v } as never),
+        set: (v) => s.editLayerField(id, 'distribution', { angle: v } as never),
       }),
       select<'square' | 'hex' | 'line'>({
         label: 'Lattice',
@@ -508,7 +508,7 @@ export class Inspector {
           { value: 'line', label: 'Line screen' },
         ],
         get: () => d().lattice,
-        set: (v) => s.updateLayerField(id, 'distribution', { lattice: v } as never),
+        set: (v) => s.editLayerField(id, 'distribution', { lattice: v } as never),
       }),
       // A halftone screen is deterministic, so there is no seed to offer.
       ...tail(false),
@@ -532,7 +532,7 @@ export class Inspector {
           { value: 'spot', label: 'Spot inks (printable)' },
         ],
         get: () => L().color.mode,
-        set: (v) => s.updateLayerField(id, 'color', { mode: v }),
+        set: (v) => s.editLayerField(id, 'color', { mode: v }),
       }),
     ];
 
@@ -540,7 +540,7 @@ export class Inspector {
       controls.push(colorControl({
         label: 'Ink', interaction: ia,
         get: () => L().color.color,
-        set: (v) => s.updateLayerField(id, 'color', { color: v }),
+        set: (v) => s.editLayerField(id, 'color', { color: v }),
       }));
     }
 
@@ -549,22 +549,22 @@ export class Inspector {
         slider({
           label: 'Hue in darks', min: 0, max: 360, step: 1, interaction: ia, unit: '°',
           get: () => L().color.hueA,
-          set: (v) => s.updateLayerField(id, 'color', { hueA: v }),
+          set: (v) => s.editLayerField(id, 'color', { hueA: v }),
         }),
         slider({
           label: 'Hue in lights', min: 0, max: 360, step: 1, interaction: ia, unit: '°',
           get: () => L().color.hueB,
-          set: (v) => s.updateLayerField(id, 'color', { hueB: v }),
+          set: (v) => s.editLayerField(id, 'color', { hueB: v }),
         }),
         slider({
           label: 'Saturation', min: 0, max: 1, step: 0.01, interaction: ia,
           get: () => L().color.saturation,
-          set: (v) => s.updateLayerField(id, 'color', { saturation: v }),
+          set: (v) => s.editLayerField(id, 'color', { saturation: v }),
         }),
         slider({
           label: 'Lightness', min: 0, max: 1, step: 0.01, interaction: ia,
           get: () => L().color.lightness,
-          set: (v) => s.updateLayerField(id, 'color', { lightness: v }),
+          set: (v) => s.editLayerField(id, 'color', { lightness: v }),
         }),
       );
     }
@@ -579,7 +579,7 @@ export class Inspector {
           set: (v) => {
             const palette = [...L().color.palette];
             palette[i] = v;
-            s.updateLayerField(id, 'color', { palette });
+            s.editLayerField(id, 'color', { palette });
           },
         }));
       }
@@ -590,7 +590,7 @@ export class Inspector {
         label: 'Ink opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
         title: 'Per-dot alpha, on top of the layer opacity',
         get: () => L().color.alpha,
-        set: (v) => s.updateLayerField(id, 'color', { alpha: v }),
+        set: (v) => s.editLayerField(id, 'color', { alpha: v }),
       }),
     );
     // Spot mode ignores the wobble on purpose — a dot nudged off its ink would
@@ -601,7 +601,7 @@ export class Inspector {
         label: 'Colour jitter', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0,
         title: 'Random value and alpha wobble per dot',
         get: () => L().color.jitter,
-        set: (v) => s.updateLayerField(id, 'color', { jitter: v }),
+        set: (v) => s.editLayerField(id, 'color', { jitter: v }),
       }));
     }
     return controls;
@@ -623,7 +623,7 @@ export class Inspector {
     const ia = this.interaction;
     const L = (): Layer => s.layer(id)!;
     const setC = (patch: Partial<Layer['color']>, key?: string): void =>
-      s.updateLayerField(id, 'color', patch, key);
+      s.editLayerField(id, 'color', patch, key);
 
     // Estimating the split walks a few thousand pixels, and `sync` runs on every
     // store change, so cache it against the things it actually depends on.
@@ -660,9 +660,9 @@ export class Inspector {
 
     // Three fields, one history key, so this is a single undo rather than three.
     const evenUp = (): void => {
-      s.updateLayerField(id, 'prefilter', { channel: 'flat' }, 'spot-setup');
-      s.updateLayerField(id, 'size', { fromTone: 0 }, 'spot-setup');
-      s.updateLayerField(id, 'color', { jitter: 0 }, 'spot-setup');
+      s.editLayerField(id, 'prefilter', { channel: 'flat' }, 'spot-setup');
+      s.editLayerField(id, 'size', { fromTone: 0 }, 'spot-setup');
+      s.editLayerField(id, 'color', { jitter: 0 }, 'spot-setup');
     };
 
     const propose = (mode: 'colour' | 'tone'): void => {

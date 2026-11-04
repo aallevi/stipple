@@ -23,6 +23,20 @@ export enum Dirty {
 }
 
 /** Which dirty level each top-level `Layer` field implies when it changes. */
+/**
+ * What a linked edit leaves alone on every layer but the one being edited:
+ * `true` for a whole field, or the keys inside it. These are what make a plate
+ * that plate — its identity, its ink, its screen angle, its random seed.
+ */
+const LAYER_OWN: Partial<Record<keyof Layer, true | string[]>> = {
+  id: true,
+  name: true,
+  visible: true,
+  color: true,
+  prefilter: ['channel', 'ink', 'undercolor'],
+  distribution: ['angle', 'seed'],
+};
+
 const FIELD_DIRTY: Record<keyof Layer, Dirty> = {
   id: Dirty.None,
   name: Dirty.None,
@@ -118,13 +132,16 @@ export class Store {
     const idx = this.project.layers.findIndex((l) => l.id === id);
     if (idx < 0) return;
     this.commit(historyKey ?? `layer:${id}:${Object.keys(patch).join(',')}`);
+    this.applyLayer(idx, patch);
+  }
 
+  private applyLayer(idx: number, patch: Partial<Layer>): void {
     let level = Dirty.None;
     for (const key of Object.keys(patch) as (keyof Layer)[]) {
       level = worst(level, FIELD_DIRTY[key] ?? Dirty.Composite);
     }
     this.project.layers[idx] = { ...this.project.layers[idx], ...patch } as Layer;
-    this.markLayer(id, level);
+    this.markLayer(this.project.layers[idx].id, level);
   }
 
   /** Patch a nested object on a layer (`prefilter`, `size`, `color`, ...). */
@@ -138,6 +155,72 @@ export class Store {
     if (!layer) return;
     const merged = { ...(layer[field] as object), ...(patch as object) } as Layer[K];
     this.updateLayer(id, { [field]: merged } as Partial<Layer>, historyKey ?? `layer:${id}:${String(field)}`);
+  }
+
+  /**
+   * Edit every layer at once, from the inspector.
+   *
+   * A set of ink plates is several layers that should mostly move together —
+   * one dot size, one lineature, one shape — but differ in exactly the things
+   * that make each one a plate. With `linked` on, an edit made to the selected
+   * layer is made to all of them, minus `LAYER_OWN`: the ink a plate measures
+   * and prints, its screen angle and its seed. Distribution parameters only
+   * reach layers on the same algorithm, since a lineature means nothing to a
+   * stochastic screen.
+   *
+   * These are separate from `updateLayer`/`updateLayerField` on purpose, so the
+   * store's own bookkeeping (a deleted shape falling back to the circle on each
+   * layer that used it) never fans out by accident. One undo step covers the
+   * whole edit.
+   */
+  linked = false;
+
+  editLayer(id: string, patch: Partial<Layer>): void {
+    if (!this.linkedHere(id)) return this.updateLayer(id, patch);
+    this.commit(`linked:${Object.keys(patch).join(',')}`);
+    const layers = this.project.layers;
+    layers.forEach((l, i) => {
+      if (l.id === id) return this.applyLayer(i, patch);
+      const own: Partial<Layer> = {};
+      for (const [k, v] of Object.entries(patch) as [keyof Layer, unknown][]) {
+        if (LAYER_OWN[k] === true) continue;
+        if (k === 'distribution') {
+          // Switching algorithm for the whole set: keep each plate's angle and
+          // give each its own seed, or every stochastic plate would put its
+          // dots in exactly the same places and they would print as one.
+          const d = { ...(v as Layer['distribution']) } as Record<string, unknown>;
+          const mine = l.distribution as Record<string, unknown>;
+          if ('angle' in d && 'angle' in mine) d.angle = mine.angle;
+          if ('seed' in d) d.seed = (Number(d.seed) || 1) + i * 137;
+          (own as Record<string, unknown>)[k] = d;
+          continue;
+        }
+        (own as Record<string, unknown>)[k] = v;
+      }
+      if (Object.keys(own).length) this.applyLayer(i, own);
+    });
+  }
+
+  editLayerField<K extends keyof Layer>(id: string, field: K, patch: Partial<Layer[K]>, historyKey?: string): void {
+    if (!this.linkedHere(id) || LAYER_OWN[field] === true) {
+      return this.updateLayerField(id, field, patch, historyKey);
+    }
+    this.commit(historyKey ?? `linked:${String(field)}`);
+    const source = this.layer(id)!;
+    const skip = Array.isArray(LAYER_OWN[field]) ? LAYER_OWN[field] as string[] : [];
+    this.project.layers.forEach((l, i) => {
+      let p = patch as Record<string, unknown>;
+      if (l.id !== id) {
+        if (field === 'distribution' && l.distribution.algo !== source.distribution.algo) return;
+        p = Object.fromEntries(Object.entries(p).filter(([k]) => !skip.includes(k)));
+        if (!Object.keys(p).length) return;
+      }
+      this.applyLayer(i, { [field]: { ...(l[field] as object), ...p } } as Partial<Layer>);
+    });
+  }
+
+  private linkedHere(id: string): boolean {
+    return this.linked && this.project.layers.length > 1 && !!this.layer(id);
   }
 
   addLayer(layer: Layer, at?: number): void {

@@ -84,6 +84,14 @@ function browserPick(accept: string, multiple = false): Promise<PickedFile[]> {
 
 export async function openFile(
   filters: { name: string; extensions: string[] }[],
+  /**
+   * Overrides the browser picker's `accept`. A phone's file picker matches by
+   * registered type, not by extension, so a format of our own — `.stipple` —
+   * is greyed out there even when the file is right in front of you, and so is
+   * the `.txt` some browsers save it as. Pass `''` to let anything be picked and
+   * let the parser be the judge.
+   */
+  browserAccept?: string,
 ): Promise<PickedFile | null> {
   if (isTauri()) {
     const d = await dialog();
@@ -92,7 +100,7 @@ export async function openFile(
     const f = await fs();
     return { name: path.split('/').pop() ?? path, bytes: await f.readFile(path), path };
   }
-  const accept = filters.flatMap((f) => f.extensions.map((e) => `.${e}`)).join(',');
+  const accept = browserAccept ?? filters.flatMap((f) => f.extensions.map((e) => `.${e}`)).join(',');
   const picked = await browserPick(accept);
   return picked[0] ?? null;
 }
@@ -114,8 +122,8 @@ export async function saveFile(
 
   // Browsers cannot silently write to disk; hand the file to the download flow.
   const blob = typeof data === 'string'
-    ? new Blob([data], { type: 'text/plain' })
-    : new Blob([data.slice().buffer as ArrayBuffer]);
+    ? new Blob([data], { type: mimeFor(defaultName) })
+    : new Blob([data.slice().buffer as ArrayBuffer], { type: mimeFor(defaultName) });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -201,5 +209,6 @@ function mimeFor(name: string): string {
   if (name.endsWith('.svg')) return 'image/svg+xml';
   if (name.endsWith('.pdf')) return 'application/pdf';
   if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.json')) return 'application/json';
   return 'application/octet-stream';
 }

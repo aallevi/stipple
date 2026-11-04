@@ -66,8 +66,8 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
 
 ## Usage
 
-1. **Open an image** (`⌘O` / `Ctrl+O`). The app starts on a test card, so you always
-   have something to look at.
+1. **Open an image.** Drop it on the empty canvas, tap *Open image…*, or press `⌘O` /
+   `Ctrl+O`. Drop another later to swap the picture under your drawing.
 2. **Pick a preset** to see what's possible: *Classic stipple*, *Voronoi drawing*,
    *Three-angle screens*, *Contour lines* and others.
 3. **Set the document** (top of the sidebar) to the size and dpi you'll print at.
@@ -83,9 +83,10 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
   *Posterise the tones*), and every dot commits to exactly one ink. *Mixing* runs from
   flat posterised bands (0) to dithered colour (1). *Leave paper* keeps the highlights
   as bare stock.
-- **Process.** Choose *Separate into inks…* above the layer list to rebuild the stack
-  as CMYK, CMY, duotone or tritone plates, each with its own screen angle. The same
-  menu offers *↩ Back to the stack from before* afterwards.
+- **Ink plates.** Choose *Split into ink plates…* above the layer list to rebuild the
+  stack as one halftone plate per ink (CMYK, CMY, RGB, risograph, earth, tritone or
+  duotone), each with its own screen angle. Any plate can be switched to stippling, and
+  the same menu offers *↩ Back to the stack from before*.
 - **Plates.** The *Plates* button writes one SVG film per ink, solid black on white,
   plus a colour proof. Every film has identical registration marks. It lists the
   screens it found before writing anything.

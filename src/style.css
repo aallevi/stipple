@@ -199,6 +199,47 @@ select:hover { background: var(--hover); }
 .toast.visible { opacity: 1; }
 .toast.error { border-color: var(--danger); color: var(--danger); }
 
+/* The empty stage: a place to put a picture, and nothing else. */
+.drop-zone {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--stage);
+  text-align: center;
+}
+.drop-zone::after {
+  content: '';
+  position: absolute;
+  inset: 16px;
+  border: 2px dashed var(--line-soft);
+  pointer-events: none;
+}
+.drop-zone[hidden] { display: none; }
+.drop-zone-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 28px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.drop-zone-title { margin: 0; font-size: 16px; font-weight: 700; color: var(--text); }
+.drop-zone-hint { margin: 0; color: var(--text-faint); }
+.stage.dropping .drop-zone { display: flex; background: rgba(111, 111, 111, 0.85); }
+.stage.dropping .drop-zone::after { border-color: var(--accent); }
+.stage.dropping .drop-zone-inner > * { visibility: hidden; }
+.stage.dropping .drop-zone-inner::before {
+  content: 'Drop to use this image';
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
 /* -- sidebar ------------------------------------------------------------- */
 
 .sidebar {
@@ -315,6 +356,20 @@ select:hover { background: var(--hover); }
   color: var(--text-faint);
   white-space: nowrap;
 }
+
+/* Linked editing: a toggle under the stack, and while it is on, an orange-edged
+   note that it is on, because an edit that lands on four layers should never be
+   a surprise. */
+.link-row { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.link-row[hidden] { display: none; }
+.link-note {
+  margin: 6px 0 0;
+  padding: 5px 8px;
+  background: var(--field);
+  border-left: 3px solid var(--accent);
+  color: var(--text-dim);
+}
+.link-note[hidden] { display: none; }
 
 /* -- sections ------------------------------------------------------------ */
 
@@ -652,6 +707,114 @@ input[type='range']::-moz-range-thumb {
 }
 .shape-del:hover { color: var(--danger); }
 
+/* -- section info -------------------------------------------------------- */
+
+/* The one round thing in the chrome, because a circled i is what people look
+   for when a panel needs explaining. */
+.info-btn {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--text-dim);
+  border-radius: 50%;
+  background: none;
+  color: var(--text-dim);
+  font: italic 700 10px/1 Georgia, "Times New Roman", serif;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.info-btn:hover { background: var(--hover); }
+.info-btn.on { background: var(--accent); border-color: var(--text); color: var(--text); }
+
+.section-info {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--field);
+  border-left: 3px solid var(--accent);
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.section-info[hidden] { display: none; }
+
+/* -- document size ------------------------------------------------------- */
+
+.size-block { display: flex; align-items: stretch; gap: 4px; }
+.size-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.size-row {
+  display: grid;
+  grid-template-columns: var(--label-w) 1fr 1fr;
+  gap: var(--gap);
+  align-items: center;
+}
+.size-field { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.size-field .num {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 2px 4px;
+  width: 100%;
+  min-width: 0;
+  -moz-appearance: textfield;
+}
+.size-field .num::-webkit-outer-spin-button,
+.size-field .num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.size-field .num:focus { background: #ececec; outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* The ratio link: a bracket joining the two rows, with a chain in the middle
+   that is whole when locked and broken when not. */
+.size-lock {
+  position: relative;
+  flex: 0 0 22px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-faint);
+}
+.size-lock::before,
+.size-lock::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 9px;
+  border-right: 1px solid currentColor;
+}
+.size-lock::before { top: 10px; bottom: calc(50% + 9px); border-top: 1px solid currentColor; }
+.size-lock::after { bottom: 10px; top: calc(50% + 9px); border-bottom: 1px solid currentColor; }
+.size-lock-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 15px;
+  margin: -7px 0 0 -2px;
+  border: 2px dashed currentColor;
+  border-radius: 4px;
+}
+.size-lock.on { color: var(--text); }
+.size-lock.on .size-lock-icon { border-style: solid; background: var(--accent); }
+.size-lock:hover { color: var(--text); }
+
+.size-actions {
+  display: grid;
+  grid-template-columns: var(--label-w) auto auto 1fr;
+  gap: var(--gap);
+  align-items: center;
+}
+.size-actions .btn + .btn { margin-left: calc(-1 * var(--gap) - 1px); }
+
+/* -- export menu --------------------------------------------------------- */
+
+/* Shown instead of the export buttons wherever there is no hover to read their
+   tooltips by. */
+.export-select { display: none; }
+
 /* -- touch -------------------------------------------------------------- */
 
 /* Finger-sized everything, on any touch screen: phones either way up, and
@@ -702,6 +865,12 @@ input[type='range']::-moz-range-thumb {
   .layer-grip { font-size: 18px; padding: 6px 0; touch-action: none; }
   .vis { font-size: 14px; }
 
+  .export-select { display: block; }
+  .export-buttons { display: none; }
+  .info-btn { width: 26px; height: 26px; font-size: 14px; }
+  .size-field .num { font-size: 16px; padding: 4px 6px; }
+  .size-lock { flex-basis: 30px; }
+
   .shape-tile { padding: 8px 2px 5px; }
   .shape-del { font-size: 18px; padding: 0 5px; }
 }
@@ -740,13 +909,23 @@ input[type='range']::-moz-range-thumb {
     min-height: 200px;
     border-bottom: 1px solid var(--line);
   }
+  /* A lane down the right edge that holds no controls, so there is always
+     somewhere for the thumb to scroll from — over a menu, a palette or a grid
+     of shapes, a swipe can otherwise land on something that wants it. The lane
+     belongs to the panel's padding, so it stays put while the content moves. */
   .sidebar {
     flex: 1 1 auto;
     min-height: 0;
     border-left: none;
+    padding-right: 26px;
     padding-bottom: env(safe-area-inset-bottom);
+    background:
+      repeating-linear-gradient(to bottom, var(--line-soft) 0 1px, transparent 1px 6px) right 12px top 0 / 2px 100% no-repeat,
+      linear-gradient(to left, var(--panel-2) 26px, var(--line) 26px 27px, var(--panel) 27px);
   }
-  .layer-list { max-height: 168px; }
+  /* No scroll area inside the scrolling panel: a list that scrolls on its own
+     catches the thumb and the page stops moving. The stack just grows. */
+  .layer-list { max-height: none; overflow: visible; }
 
   /* Frame timings are for tuning the engine, not for a phone screen. */
   .hud { display: none; }

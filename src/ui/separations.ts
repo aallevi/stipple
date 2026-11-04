@@ -31,13 +31,24 @@ export type SeparationKind = {
   /** Shown in the menu. */
   label: string;
   inks: Ink[];
-  screen: 'halftone' | 'stochastic';
 };
 
+/**
+ * Every separation is halftone plates, one per ink.
+ *
+ * There used to be stippled variants of most of these. They were worse prints —
+ * a stochastic screen ruled to the same fineness reads as noise next to a
+ * halftone, and plates with independent random dots clump where they coincide
+ * — and they were never needed as presets: each plate is an ordinary layer, so
+ * switching one to Stochastic or Voronoi afterwards is one menu away, with the
+ * ink, the measuring and the multiply blend all kept.
+ *
+ * So the list is ink sets, not screen-and-ink combinations, and any palette
+ * worth printing by hand belongs in it.
+ */
 export const SEPARATIONS: Record<string, SeparationKind> = {
-  'cmyk-halftone': {
-    label: 'CMYK · halftone (4 plates)',
-    screen: 'halftone',
+  cmyk: {
+    label: 'CMYK (4 plates)',
     inks: [
       { name: 'Cyan', color: CYAN },
       { name: 'Magenta', color: MAGENTA },
@@ -45,48 +56,50 @@ export const SEPARATIONS: Record<string, SeparationKind> = {
       { name: 'Black', color: BLACK },
     ],
   },
-  'cmyk-stipple': {
-    label: 'CMYK · stipple (4 plates)',
-    screen: 'stochastic',
-    inks: [
-      { name: 'Cyan', color: CYAN },
-      { name: 'Magenta', color: MAGENTA },
-      { name: 'Yellow', color: YELLOW },
-      { name: 'Black', color: BLACK },
-    ],
-  },
-  'cmy-halftone': {
-    label: 'CMY · halftone (3 plates)',
-    screen: 'halftone',
+  cmy: {
+    label: 'CMY, no black (3 plates)',
     inks: [
       { name: 'Cyan', color: CYAN },
       { name: 'Magenta', color: MAGENTA },
       { name: 'Yellow', color: YELLOW },
     ],
   },
-  'rgb-stipple': {
-    label: 'RGB · stipple (3 plates)',
-    screen: 'stochastic',
+  rgb: {
+    label: 'Red, green, blue (3 plates)',
     inks: [
       { name: 'Red', color: [0.85, 0.12, 0.14, 1] },
       { name: 'Green', color: [0.0, 0.62, 0.31, 1] },
       { name: 'Blue', color: [0.11, 0.25, 0.68, 1] },
     ],
   },
-  'duotone': {
-    label: 'Duotone · stipple (2 plates)',
-    screen: 'stochastic',
+  riso: {
+    label: 'Risograph · pink, blue, yellow (3 plates)',
     inks: [
-      { name: 'Warm red', color: [0.89, 0.25, 0.2, 1] },
-      { name: 'Black', color: BLACK },
+      { name: 'Fluoro pink', color: [1.0, 0.28, 0.56, 1] },
+      { name: 'Blue', color: [0.0, 0.47, 0.84, 1] },
+      { name: 'Yellow', color: [1.0, 0.9, 0.0, 1] },
     ],
   },
-  'tritone': {
-    label: 'Tritone · stipple (3 plates)',
-    screen: 'stochastic',
+  earth: {
+    label: 'Earth · brown, tan, ochre (3 plates)',
+    inks: [
+      { name: 'Brown', color: [0.32, 0.18, 0.11, 1] },
+      { name: 'Tan', color: [0.66, 0.45, 0.28, 1] },
+      { name: 'Ochre', color: [0.89, 0.72, 0.35, 1] },
+    ],
+  },
+  tritone: {
+    label: 'Tritone · ochre, teal, black (3 plates)',
     inks: [
       { name: 'Ochre', color: [0.85, 0.6, 0.15, 1] },
       { name: 'Teal', color: [0.0, 0.45, 0.48, 1] },
+      { name: 'Black', color: BLACK },
+    ],
+  },
+  duotone: {
+    label: 'Duotone · warm red, black (2 plates)',
+    inks: [
+      { name: 'Warm red', color: [0.89, 0.25, 0.2, 1] },
       { name: 'Black', color: BLACK },
     ],
   },
@@ -133,14 +146,11 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
   // Layer lengths are fractions of the short edge (`core/scale.ts`), and the
   // screen is a physical 45 lpi, so the two meet here: the cell is worked out in
   // paper terms and then written down as the proportion of *this* document it
-  // comes to. A stochastic plate is ruled to match, so the two kinds of
-  // separation land at comparable fineness instead of one being tuned by eye.
+  // comes to.
   const unit = unitPx(canvas);
-  const inCell = (fraction: number): number => (cell * fraction) / unit;
-  const cellsAcross = Math.round(unit / cell);
 
   return kind.inks.map((ink, i) => {
-    const layer = defaultLayer(ink.name, kind.screen === 'halftone' ? 'halftone' : 'jittered');
+    const layer = defaultLayer(ink.name, 'halftone');
     const isKey = i === kind.inks.length - 1 && isNeutral(ink.color);
 
     layer.blend = 'multiply';
@@ -152,30 +162,13 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
       undercolor: isKey ? 0 : 1,
     };
     layer.color = { ...layer.color, mode: 'solid', color: ink.color };
-
-    if (kind.screen === 'halftone') {
-      layer.distribution = {
-        algo: 'halftone', lineature, angle: ANGLES[i % ANGLES.length],
-        lattice: 'square', toneRange: [0, 1], invertDensity: false,
-      };
-      // gamma 0.5 makes ink *area* track coverage, which is the whole point of a
-      // halftone: with a linear ramp a 50% grey prints at about 68%.
-      layer.size = { ...layer.size, min: 0, max: inCell(Math.SQRT2), fromTone: 1, gamma: 0.5, jitter: 0 };
-    } else {
-      layer.distribution = {
-        ...layer.distribution,
-        // One candidate site per screen cell, so a stipple plate resolves the
-        // same detail its halftone counterpart would.
-        density: cellsAcross,
-        // Offsetting the seed per plate keeps two stochastic screens from
-        // landing their dots in the same places and clumping.
-        seed: 1 + i * 137,
-      } as Layer['distribution'];
-      // Just under half a cell: dense enough to reach solid in the shadows once
-      // the dots overlap, open enough that the paper still shows in the lights.
-      layer.size = { ...layer.size, min: 0, max: inCell(0.48), fromTone: 1, gamma: 0.5, jitter: 0.15 };
-      layer.rotation = { ...layer.rotation, random: 1 };
-    }
+    layer.distribution = {
+      algo: 'halftone', lineature, angle: ANGLES[i % ANGLES.length],
+      lattice: 'square', toneRange: [0, 1], invertDensity: false,
+    };
+    // gamma 0.5 makes ink *area* track coverage, which is the whole point of a
+    // halftone: with a linear ramp a 50% grey prints at about 68%.
+    layer.size = { ...layer.size, min: 0, max: (cell * Math.SQRT2) / unit, fromTone: 1, gamma: 0.5, jitter: 0 };
     return layer;
   });
 }

@@ -412,6 +412,12 @@ export function section(
   controls: Control[],
   collapsed = false,
   actions: HTMLElement[] = [],
+  /**
+   * What the section is for, in a sentence or three, behind an ⓘ in its header.
+   * A tooltip would do on a desktop, but a phone has no hover, and the sections
+   * that need explaining are exactly the ones whose names do not say enough.
+   */
+  info?: string,
 ): Control {
   const body = h('div', { class: 'section-body' }, ...controls.map((c) => c.el));
   // The header is a row rather than one big button so it can carry its own
@@ -419,9 +425,27 @@ export function section(
   const toggleBtn = h('button', { class: 'section-toggle', type: 'button' },
     h('span', { class: 'chev' }), title);
   const head = h('div', { class: 'section-head' }, toggleBtn);
-  if (actions.length) head.append(h('div', { class: 'section-actions' }, ...actions));
-
   const el = h('div', { class: `section${collapsed ? ' collapsed' : ''}` }, head, body);
+
+  const tools: HTMLElement[] = [...actions];
+  if (info) {
+    const note = h('p', { class: 'section-info', hidden: '' }, info);
+    const infoBtn = h('button', {
+      class: 'info-btn', type: 'button', title: `What is ${title}?`, 'aria-expanded': 'false',
+    }, 'i');
+    infoBtn.addEventListener('click', () => {
+      const show = note.hidden;
+      note.hidden = !show;
+      infoBtn.classList.toggle('on', show);
+      infoBtn.setAttribute('aria-expanded', String(show));
+      // Asking what a folded section is for should also show you the section.
+      if (show) el.classList.remove('collapsed');
+    });
+    body.prepend(note);
+    tools.unshift(infoBtn);
+  }
+  if (tools.length) head.append(h('div', { class: 'section-actions' }, ...tools));
+
   toggleBtn.addEventListener('click', () => el.classList.toggle('collapsed'));
   return {
     el,

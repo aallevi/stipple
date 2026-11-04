@@ -107,15 +107,26 @@ drawing). The readout resolves the pair into pixels.
 **Rotation** — a fixed `Angle`, per-mark `Randomness`, and `Follow contours`, which
 aligns each mark to the image's contours and is what makes line shapes flow around forms.
 
-**Ink** — what the layer measures. `Overall tone` is the default. `One ink` measures
-how much of a single ink the image asks for at each pixel, which is what makes a layer
-one plate of a separation; `Undercolour` decides how much of the neutral component it
-leaves to a black plate.
+**Measure** — what the layer responds to in what it reads, which decides *where* its
+dots go. `Overall tone` is the default: dots where it is dark. `One ink` measures how much
+of a single ink the image asks for at each pixel, which is what makes a layer one plate of
+a separation; `Undercolour` decides how much of the neutral component it leaves to a black
+plate. `Nothing` spreads dots evenly, for a spot-ink layer that carries lightness in which
+ink each dot takes.
 
 **Colour** — solid, adaptive (hue ramps with tone), sampled from the image, a random
 palette pick per point, or **spot inks**. This is the ink the layer *prints with*, which
-is separate from the ink it *measures* — the Ink section has a button to match one to
+is separate from the ink it *measures* — the Measure section has a button to match one to
 the other.
+
+**How Measure, Colour and the layer stack fit together.** Measure decides where a layer's
+dots go; Colour decides what they print with; the stack decides how many such layers
+there are and how they land on each other (Blend). So there are two ways to a set of
+screens. *One layer, Colour → Spot inks*: dots go where it is dark, and each picks one of
+your inks. *Several layers, each Measure → One ink and Colour → that same ink*: every
+layer is one plate. `Split into ink plates…` builds the second for you. Mixing them —
+a spot-ink layer that also measures one ink — is allowed, and draws only where that ink
+is needed but in several inks; it is rarely what a print wants.
 
 ## Printing it by hand
 
@@ -158,12 +169,14 @@ out much paler than the photograph. The panel notices and offers **Set up for ev
 coverage**, which lays dots down evenly at one size and leaves lightness entirely to
 which ink each dot takes. That is what a real scatter separation does.
 
-**Process separations — one layer per ink.** The menu at the top of the layer stack
-replaces the stack with one plate per ink: CMYK, CMY, RGB, duotone or tritone, screened
-or stippled. Here each layer *measures* the coverage of its own ink and prints solid in
-it; the plates multiply, carry the classic 30°-apart screen angles, and only the black
+**Ink plates — one layer per ink.** `Split into ink plates…` at the top of the layer
+stack replaces the stack with one halftone plate per ink: CMYK, CMY, RGB, risograph,
+earth, tritone or duotone. Here each layer *measures* the coverage of its own ink and
+prints solid in it; the plates multiply, carry the classic 30°-apart screen angles, and only the black
 plate carries the neutrals, so total ink coverage stays printable. Each plate is an
-ordinary layer afterwards — change its ink, its screen, or its shape like any other.
+ordinary layer afterwards — change its ink, its shape, or switch its screen to Stochastic
+or Voronoi for a stippled plate. The same menu then offers `↩ Back to the stack from
+before`, which restores the layers you had before the first split.
 
 Use spot inks when you want to choose the colours, and when a posterised or hand-printed
 look is the point. Use process separations when you want a faithful reproduction and are
@@ -177,10 +190,15 @@ which screens it found before it writes anything. A layer that is not one ink (a
 ramp, or colour sampled straight from the image) cannot belong to a single screen, so it
 is left out and named in the warning.
 
-**Document** — width and height are staged, not applied live: resizing invalidates
-every cache and re-runs every distribution, so a drag across the slider would queue
-thousands of full rebuilds. The readout shows what you are about to get, in pixels and
-in inches at the current resolution; Apply commits it.
+**Document** — each edge is shown in pixels and in millimetres (or inches), with a link
+beside them that keeps the proportions when closed. Pixels are how detailed the file is,
+millimetres are how big the print is, and `Resolution` is the exchange rate: raising it
+keeps the print size and gives the file more pixels, and `2×` / `½×` do that in one press.
+That is the upscale: the same print, the same screen, every dot drawn with twice the
+pixels — how to get a crisp PNG out of a small source. Typing a bigger size in
+millimetres is different: a bigger sheet, and since the halftone is ruled in lines per
+inch of paper, more screen cells across it. Changes are staged until `Apply`, because a resize
+re-runs every layer.
 
 **One canvas pixel is 1/dpi of an inch**, everywhere — the panel readout, the halftone
 lineature, and all four exporters. A 900 × 600 document at 300 dpi is 3 × 2 inches, and
@@ -188,7 +206,7 @@ that is the size the SVG, the PDF and the plates open at; the PNG comes out 900 
 one pixel per canvas pixel. Set the resolution you intend to print at and the numbers
 in the panel are the numbers you get.
 
-**Measure in** decides what every length in the panel is written in — millimetres by
+**Show lengths in** decides what every length in the panel is written in — millimetres by
 default, or inches, or per cent of the short edge, or raw canvas pixels. The engine works
 in pixels throughout; this only changes how they are typed and read. Millimetres and
 inches hold as long as the resolution does. Per cent holds whatever size the document is,

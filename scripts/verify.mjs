@@ -11,7 +11,9 @@
 import { chromium } from 'playwright';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
-const URL = process.env.STIPPLE_URL ?? 'http://localhost:1420';
+// `?testcard` starts on the synthetic test card instead of an empty sheet, so
+// every check has a known picture to measure.
+const URL = process.env.STIPPLE_URL ?? 'http://localhost:1420/?testcard';
 const OUT = 'artifacts';
 mkdirSync(OUT, { recursive: true });
 

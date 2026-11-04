@@ -74,7 +74,7 @@ export function collectPlates(project: Project): PlateSet {
   }
 
   // No spot layer: treat each distinct solid ink as a plate, which is exactly
-  // what "Separate into inks…" leaves behind.
+  // what "Split into ink plates…" leaves behind.
   const plates: Plate[] = [];
   const routeOf = new Map<string, number>();
   for (const l of live) {

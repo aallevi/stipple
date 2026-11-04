@@ -6,11 +6,12 @@ import { exportPlates, planPlates } from '../export/plates';
 import { exportPNG } from '../export/png';
 import { estimatePoints, exportSVG, WARN_POINTS } from '../export/svg';
 import { decodeImage } from '../image/loader';
+import type { ImageSource } from '../image/density';
 import { testCard } from '../image/testcard';
 import { Engine } from '../pipeline/engine';
-import { decodeNative, openFile, saveFile, saveFiles, supportedImageExtensions } from '../platform';
+import { decodeNative, isTauri, openFile, saveFile, saveFiles, supportedImageExtensions, type PickedFile } from '../platform';
 import { rasterBitmap } from '../shape/import';
-import { button, colorControl, h, readout, section, select, slider, type Control, type Interaction, installTouchSliders } from './controls';
+import { button, colorControl, h, raw, readout, section, select, slider, type Control, type Interaction, installTouchSliders } from './controls';
 import { Inspector } from './inspector';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
@@ -34,6 +35,20 @@ export class App {
   private inspector: Inspector;
   private hud = h('div', { class: 'hud' });
   private toast = h('div', { class: 'toast' });
+  /**
+   * What the canvas shows before there is a picture: a place to drop one. The
+   * app used to start on a synthetic test card so there was "always something
+   * on screen", but a stippled gradient you did not ask for is not something —
+   * it is noise to clear before you can begin. The card is still there for the
+   * verification run, behind `?testcard`.
+   */
+  private dropZone = h('div', { class: 'drop-zone' },
+    h('div', { class: 'drop-zone-inner' },
+      h('p', { class: 'drop-zone-title' }, 'Drop an image here'),
+      button('Open image\u2026', () => void this.openImage(), 'primary'),
+      h('p', { class: 'drop-zone-hint' }, 'PNG, JPEG, WebP or GIF. It stays on your device.'),
+    ),
+  );
   private interaction: Interaction;
   private document!: Control;
 
@@ -68,7 +83,7 @@ export class App {
         this.engine.setShapeBitmap(id, bmp);
       },
       (shapeId) => {
-        if (this.layers.selected) this.store.updateLayer(this.layers.selected, { shapeId });
+        if (this.layers.selected) this.store.editLayer(this.layers.selected, { shapeId });
       },
     );
     this.inspector = new Inspector(
@@ -82,6 +97,7 @@ export class App {
     root.append(this.buildLayout());
     installTouchSliders(root);
     this.bindViewport();
+    this.bindDrop();
     this.bindKeys();
 
     this.store.subscribe((project, change) => {
@@ -95,7 +111,13 @@ export class App {
       if (change.global) this.document.sync();
     });
 
-    this.engine.setSource(testCard());
+    if (new URLSearchParams(location.search).has('testcard')) {
+      this.engine.setSource(testCard());
+      this.dropZone.hidden = true;
+    } else {
+      // A blank white sheet: nothing to measure, so no dots until an image arrives.
+      this.engine.setSource(blankSource());
+    }
     this.layers.select(this.store.get().layers[0].id);
     this.shapes.render(this.selectedShapeId());
     this.fitToWindow();
@@ -185,7 +207,8 @@ export class App {
         presetSel,
         h('span', { class: 'spacer' }),
         h('span', { class: 'tool-caption' }, 'Export'),
-        h('div', { class: 'tool-group' },
+        this.exportMenu(),
+        h('div', { class: 'tool-group export-buttons' },
           button('PNG', () => void this.doExport('png'), '', 'Export a raster image at the document resolution'),
           button('SVG', () => void this.doExport('svg'), '', 'Export vector geometry'),
           button('PDF', () => void this.doExport('pdf'), '', 'Export a print-ready vector PDF'),
@@ -198,7 +221,7 @@ export class App {
         ),
       ),
       h('main', { class: 'main' },
-        h('div', { class: 'stage' }, this.canvas, this.hud, this.toast),
+        this.stage,
         // Global first, then the stack, then the selected layer's chain: the
         // sidebar narrows from the whole document down to one layer.
         h('aside', { class: 'sidebar' },
@@ -211,69 +234,205 @@ export class App {
   }
 
   /**
+   * Export as one menu whose every entry says what it makes.
+   *
+   * The buttons rely on tooltips to explain themselves, and a touch screen has
+   * no hover, so on a phone "PDF" and "Plates" were four guesses. The stylesheet
+   * shows this in their place under a coarse pointer; on a desktop it is hidden.
+   */
+  private exportMenu(): HTMLElement {
+    const sel = h('select', { class: 'export-select', 'aria-label': 'Export' }) as HTMLSelectElement;
+    const entries: [string, string, () => void][] = [
+      ['png', 'PNG \u2014 a picture file, at the document\u2019s pixel size', () => void this.doExport('png')],
+      ['svg', 'SVG \u2014 vector drawing, sharp at any size', () => void this.doExport('svg')],
+      ['pdf', 'PDF \u2014 vector, print-ready at the document\u2019s size', () => void this.doExport('pdf')],
+      ['plates', 'Plates \u2014 one black film per ink, for burning screens', () => void this.doExportPlates()],
+    ];
+    sel.append(h('option', { value: '' }, 'Export\u2026'));
+    for (const [value, label] of entries) sel.append(h('option', { value }, label));
+    sel.addEventListener('change', () => {
+      const entry = entries.find(([v]) => v === sel.value);
+      sel.value = '';
+      entry?.[2]();
+    });
+    return sel;
+  }
+
+  /**
    * Canvas size, resolution and background.
    *
-   * Width and height are staged rather than applied live. Resizing the document
-   * invalidates every cache in the engine and re-runs every distribution, so a
-   * drag across this slider would queue thousands of full rebuilds and the app
-   * would appear to hang — and each intermediate value is one you never wanted
-   * anyway. The controls show what you are about to get; Apply commits it.
+   * Size is staged, not applied live. Resizing the document invalidates every
+   * cache in the engine and re-runs every distribution, so typing a width digit
+   * by digit would queue a full rebuild per keystroke, each one a size nobody
+   * wanted. The fields show what you are about to get; Apply commits it.
+   *
+   * Each edge is shown twice, in canvas pixels and in print length, because
+   * they answer different questions: pixels are how detailed the file is,
+   * millimetres are how big the print is, and resolution is the exchange rate
+   * between them. So changing resolution keeps the print size and changes the
+   * pixel count — more dpi, finer file, same sheet — the way an image editor
+   * resamples. And because every length in a layer is a fraction of the
+   * picture, enlarging the document is a true upscale: the same drawing, the
+   * same marks, each drawn with more pixels.
    */
   private documentSection(): Control {
     const store = this.store;
     const project = store.get();
-    const pending = { width: project.canvas.width, height: project.canvas.height };
+    const pending = { width: project.canvas.width, height: project.canvas.height, dpi: project.canvas.dpi };
+    let locked = true;
+    const MIN_PX = 128;
+    const MAX_PX = 8000;
+
+    const physical = (): 'mm' | 'in' => (this.store.get().canvas.units === 'in' ? 'in' : 'mm');
+    const toLen = (px: number, dpi: number): number => (physical() === 'in' ? px / dpi : (px / dpi) * 25.4);
+    const fromLen = (len: number, dpi: number): number => (physical() === 'in' ? len * dpi : (len / 25.4) * dpi);
+    const clampPx = (v: number): number => Math.round(Math.min(MAX_PX, Math.max(MIN_PX, v)));
 
     const apply = button('Apply', () => {
-      this.store.updateCanvas({ width: Math.round(pending.width), height: Math.round(pending.height) });
+      const w = Math.round(pending.width);
+      const ht = Math.round(pending.height);
+      this.store.updateCanvas({ width: w, height: ht, dpi: Math.round(pending.dpi) });
       this.fitToWindow();
-      this.notify(`Canvas set to ${Math.round(pending.width)}×${Math.round(pending.height)}`);
+      this.notify(`Document set to ${w} × ${ht} px at ${Math.round(pending.dpi)} dpi`);
       refresh();
-    }, 'sm primary', 'Resize the document to the staged width and height');
+    }, 'sm primary', 'Resize the document to the staged size and resolution');
 
     const dirty = (): boolean => {
       const c = this.store.get().canvas;
-      return Math.round(pending.width) !== c.width || Math.round(pending.height) !== c.height;
+      return Math.round(pending.width) !== c.width || Math.round(pending.height) !== c.height
+        || Math.round(pending.dpi) !== c.dpi;
     };
     let refresh = (): void => {};
 
-    const stage = (patch: Partial<typeof pending>): void => {
-      Object.assign(pending, patch);
+    /**
+     * Stage one edge in pixels. With the ratio locked, the other edge follows so
+     * the picture keeps its shape — and if that pushes it past the limits, both
+     * are pulled back together rather than one being clipped out of proportion.
+     */
+    const stageEdge = (edge: 'width' | 'height', px: number): void => {
+      const other = edge === 'width' ? 'height' : 'width';
+      if (!locked) {
+        pending[edge] = clampPx(px);
+      } else {
+        const ratio = pending[other] / pending[edge];
+        let a = px;
+        let b = px * ratio;
+        const over = Math.max(a, b) / MAX_PX;
+        const under = Math.min(a, b) / MIN_PX;
+        if (over > 1) { a /= over; b /= over; }
+        if (under < 1) { a /= under; b /= under; }
+        pending[edge] = clampPx(a);
+        pending[other] = clampPx(b);
+      }
+      refresh();
+    };
+
+    const field = (step: string): HTMLInputElement =>
+      h('input', { type: 'number', class: 'num', step, min: '0', inputmode: 'decimal' }) as HTMLInputElement;
+    const edgeRow = (edge: 'width' | 'height', label: string): { el: HTMLElement; sync(): void } => {
+      const px = field('1');
+      const len = field('0.1');
+      const lenUnit = h('span', { class: 'unit' }, 'mm');
+      px.addEventListener('change', () => stageEdge(edge, parseFloat(px.value) || pending[edge]));
+      len.addEventListener('change', () => {
+        const v = parseFloat(len.value);
+        stageEdge(edge, Number.isFinite(v) && v > 0 ? fromLen(v, pending.dpi) : pending[edge]);
+      });
+      return {
+        el: h('div', { class: 'size-row' },
+          h('span', { class: 'ctl-label' }, label),
+          h('span', { class: 'size-field' }, px, h('span', { class: 'unit' }, 'px')),
+          h('span', { class: 'size-field' }, len, lenUnit),
+        ),
+        sync() {
+          px.value = String(Math.round(pending[edge]));
+          const d = physical() === 'in' ? 2 : 1;
+          len.value = toLen(pending[edge], pending.dpi).toFixed(d);
+          lenUnit.textContent = physical();
+        },
+      };
+    };
+
+    const widthRow = edgeRow('width', 'Width');
+    const heightRow = edgeRow('height', 'Height');
+    // The chain sits beside both rows, the way a linked pair is drawn in a
+    // layout tool: one link, two edges.
+    const lock = h('button', {
+      class: 'size-lock on', type: 'button', 'aria-pressed': 'true',
+      title: 'Keep the proportions: changing one edge changes the other',
+    }, h('span', { class: 'size-lock-icon' }));
+    lock.addEventListener('click', () => {
+      locked = !locked;
+      lock.classList.toggle('on', locked);
+      lock.setAttribute('aria-pressed', String(locked));
+    });
+    const sizeBlock: Control = {
+      el: h('div', { class: 'size-block' }, h('div', { class: 'size-rows' }, widthRow.el, heightRow.el), lock),
+      sync() { widthRow.sync(); heightRow.sync(); },
+    };
+
+    /**
+     * Twice the pixels on the same sheet: resolution and pixel count move
+     * together, so the print size, the halftone screen and every mark stay
+     * exactly as they are and the file simply gets finer. That is the upscale —
+     * a bigger sheet would be a different print, with more screen cells across
+     * it. Proportional whether or not the link is closed.
+     */
+    const scaleBy = (k: number): void => {
+      const dpi = Math.min(1200, Math.max(36, Math.round(pending.dpi * k)));
+      const real = dpi / pending.dpi;
+      const w = pending.width * real;
+      const ht = pending.height * real;
+      const fit = Math.min(1, MAX_PX / Math.max(w, ht));
+      const lift = Math.max(1, MIN_PX / Math.min(w * fit, ht * fit));
+      pending.width = clampPx(w * fit * lift);
+      pending.height = clampPx(ht * fit * lift);
+      pending.dpi = dpi;
       refresh();
     };
 
     const controls: Control[] = [
+      sizeBlock,
+      // DPI changes keep the print size and move the pixel count.
       slider({
-        label: 'Width', min: 128, max: 8000, step: 1, unit: 'px',
-        get: () => pending.width,
-        set: (v) => stage({ width: v }),
+        label: 'Resolution', min: 36, max: 1200, step: 1, unit: 'dpi',
+        title: 'Dots per inch of paper. Raising it keeps the print size and gives the file '
+          + 'more pixels — a finer PNG, with every mark drawn larger in pixels',
+        get: () => pending.dpi,
+        set: (v) => {
+          const dpi = Math.round(v);
+          const k = dpi / pending.dpi;
+          pending.dpi = dpi;
+          const w = pending.width * k;
+          const ht = pending.height * k;
+          const fit = Math.min(1, MAX_PX / Math.max(w, ht));
+          pending.width = clampPx(w * fit);
+          pending.height = clampPx(ht * fit);
+          refresh();
+        },
       }),
-      slider({
-        label: 'Height', min: 128, max: 8000, step: 1, unit: 'px',
-        get: () => pending.height,
-        set: (v) => stage({ height: v }),
-      }),
+      raw(h('div', { class: 'size-actions' },
+        h('span', { class: 'ctl-label' }, 'Scale'),
+        button('½×', () => scaleBy(0.5), 'sm', 'Half the pixels on the same sheet — a lighter file'),
+        button('2×', () => scaleBy(2), 'sm', 'Twice the pixels on the same sheet — the same print, '
+          + 'exported with twice the detail'),
+      )),
       readout(() => {
         const c = this.store.get().canvas;
         const w = Math.round(pending.width);
-        const h = Math.round(pending.height);
-        const size = `${formatLength(w, c)} × ${formatLength(h, c)} at ${c.dpi} dpi`;
-        return dirty() ? `${w} × ${h} px · ${size} — not applied yet` : `${w} × ${h} px · ${size}`;
-      }),
-      // DPI is safe to apply live: it rescales the export and the halftone cell,
-      // but it never resizes a buffer.
-      slider({
-        label: 'Resolution', min: 36, max: 1200, step: 1, unit: 'dpi', interaction: this.interaction,
-        title: 'Used by the PNG and PDF exporters, and by the halftone lineature',
-        get: () => this.store.get().canvas.dpi,
-        set: (v) => this.store.updateCanvas({ dpi: Math.round(v) }),
+        const ht = Math.round(pending.height);
+        const u = physical();
+        const d = u === 'in' ? 2 : 0;
+        const size = `${toLen(w, pending.dpi).toFixed(d)} × ${toLen(ht, pending.dpi).toFixed(d)} ${u} at ${Math.round(pending.dpi)} dpi`;
+        const pxChange = c.width !== w ? ` (${c.width} → ${w} px wide)` : '';
+        return dirty() ? `${size}${pxChange} — press Apply` : `${w} × ${ht} px · ${size}`;
       }),
       // Every length in the panel is written in this. The engine is unaffected —
       // it works in canvas pixels whatever this says.
       select<'mm' | 'in' | '%' | 'px'>({
-        label: 'Measure in',
-        title: 'Millimetres and inches hold as long as the resolution does; '
-          + 'per cent of the short edge holds whatever size the document is',
+        label: 'Show lengths in',
+        title: 'How dot sizes, spacings and blur are written in the panel. Changes nothing '
+          + 'about the picture or the export',
         options: [
           { value: 'mm', label: 'Millimetres' },
           { value: 'in', label: 'Inches' },
@@ -290,7 +449,13 @@ export class App {
       }),
     ];
 
-    const sec = section('Document', controls, true, [apply]);
+    const sec = section('Document', controls, true, [apply],
+      'The sheet everything is drawn on. Pixels are how detailed the file is, millimetres how big '
+      + 'the print is, and resolution links the two. To upscale \u2014 a finer PNG of the same '
+      + 'print \u2014 press 2\u00d7 or raise the resolution: the dots stay the same, each drawn with '
+      + 'more pixels. Typing a bigger size in millimetres makes a bigger print instead. Nothing '
+      + 'changes until you press Apply. \u201cShow lengths in\u201d only changes how sizes are '
+      + 'written in the panel, never the picture.');
     refresh = (): void => {
       apply.disabled = !dirty();
       apply.classList.toggle('pending', dirty());
@@ -300,16 +465,21 @@ export class App {
     // An undo, a preset or an opened image resizes the document without going
     // through these controls. Re-stage from the project when that happens, or
     // Apply would sit lit up offering to undo a change the user never made.
-    let seen = `${project.canvas.width}x${project.canvas.height}`;
+    const key = (): string => {
+      const c = store.get().canvas;
+      return `${c.width}x${c.height}@${c.dpi}`;
+    };
+    let seen = key();
     return {
       el: sec.el,
       sync() {
-        const c = store.get().canvas;
-        const now = `${c.width}x${c.height}`;
+        const now = key();
         if (now !== seen) {
           seen = now;
+          const c = store.get().canvas;
           pending.width = c.width;
           pending.height = c.height;
+          pending.dpi = c.dpi;
         }
         refresh();
       },
@@ -447,7 +617,37 @@ export class App {
   private async openImage(): Promise<void> {
     const extensions = await supportedImageExtensions();
     const picked = await openFile([{ name: 'Image', extensions }]);
-    if (!picked) return;
+    if (picked) await this.loadImage(picked);
+  }
+
+  /**
+   * The stage takes a dropped image at any time — onto the empty drop zone, or
+   * onto a drawing in progress to swap the picture under it. Shapes have their
+   * own drop target in the Shape section, which catches its drops first.
+   */
+  private stage = h('div', { class: 'stage' }, this.canvas, this.dropZone, this.hud, this.toast);
+
+  private bindDrop(): void {
+    const stage = this.stage;
+    const isFiles = (e: DragEvent): boolean => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    stage.addEventListener('dragover', (e) => {
+      if (!isFiles(e)) return;
+      e.preventDefault();
+      stage.classList.add('dropping');
+    });
+    stage.addEventListener('dragleave', (e) => {
+      if (e.target === stage || !stage.contains(e.relatedTarget as Node)) stage.classList.remove('dropping');
+    });
+    stage.addEventListener('drop', (e) => {
+      stage.classList.remove('dropping');
+      const file = e.dataTransfer?.files[0];
+      if (!file) return;
+      e.preventDefault();
+      void file.arrayBuffer().then((buf) => this.loadImage({ name: file.name, bytes: new Uint8Array(buf) }));
+    });
+  }
+
+  private async loadImage(picked: PickedFile): Promise<void> {
     try {
       // TIFF and friends have no web-view decoder; fall back to the Rust one,
       // which is only present in the desktop shell.
@@ -455,6 +655,7 @@ export class App {
         ? toSource(await decodeNative(picked.path))
         : await decodeImage(picked.bytes);
       this.engine.setSource(src);
+      this.dropZone.hidden = true;
       // Take the image's *shape*, not its pixel count.
       //
       // Adopting the source dimensions outright, as this used to, meant the
@@ -570,17 +771,33 @@ export class App {
   }
 
   private async saveProject(): Promise<void> {
-    await saveFile(JSON.stringify(this.store.get(), null, 2), 'untitled.stipple',
+    // In a browser the file goes through the download flow, which names it by
+    // its type: a bare `.stipple` comes out as `.stipple.txt` on iOS and is then
+    // greyed out by the picker that should load it. As JSON it stays JSON.
+    const name = isTauri() ? 'untitled.stipple' : 'untitled.stipple.json';
+    await saveFile(JSON.stringify(this.store.get(), null, 2), name,
       [{ name: 'Stipple project', extensions: ['stipple', 'json'] }]);
     this.notify('Project saved');
   }
 
   private async loadProject(): Promise<void> {
-    const picked = await openFile([{ name: 'Stipple project', extensions: ['stipple', 'json'] }]);
+    const picked = await openFile([{ name: 'Stipple project', extensions: ['stipple', 'json'] }], '');
     if (!picked) return;
     try {
-      const project = JSON.parse(new TextDecoder().decode(picked.bytes)) as Project;
-      if (project.version !== 1) throw new Error(`unsupported project version ${project.version}`);
+      let project: Project;
+      try {
+        project = JSON.parse(new TextDecoder().decode(picked.bytes)) as Project;
+      } catch {
+        throw new Error(`${picked.name} is not a Stipple project`);
+      }
+      if (!project || !Array.isArray(project.layers) || !project.canvas) {
+        throw new Error(`${picked.name} is not a Stipple project`);
+      }
+      // Version 1 files are converted on load (`normaliseProject`); anything
+      // newer than this build knows was made by a later version of the app.
+      if (project.version !== 1 && project.version !== 2) {
+        throw new Error(`${picked.name} was saved by a newer version of Stipple`);
+      }
       // Built-ins are not stored per-project by identity, so make sure a project
       // saved before a built-in existed still resolves every shape reference.
       const ids = new Set(project.shapes.map((s) => s.id));
@@ -679,4 +896,11 @@ function toSource(
     height: decoded.height,
     rgba: new Uint8ClampedArray(decoded.rgba.buffer, decoded.rgba.byteOffset, decoded.rgba.length),
   };
+}
+
+/** A small white image: a sheet with nothing on it, so no layer finds anything to draw. */
+function blankSource(): ImageSource {
+  const width = 16;
+  const height = 16;
+  return { width, height, rgba: new Uint8ClampedArray(width * height * 4).fill(255) };
 }

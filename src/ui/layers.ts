@@ -43,8 +43,38 @@ export class LayersPanel {
       ),
       this.separateMenu(),
       this.list,
+      this.linkRow,
     );
     this.list.append(this.marker);
+    this.linkToggle.addEventListener('change', () => this.setLinked(this.linkToggle.checked));
+  }
+
+  /**
+   * "Change all layers together", and the line that says what that spares.
+   * Only shown with more than one layer, where it can mean anything.
+   */
+  private linkToggle = h('input', { type: 'checkbox', class: 'switch-input' }) as HTMLInputElement;
+  private linkNote = h('p', { class: 'link-note' });
+  private linkRow = h('div', { class: 'link-row' },
+    h('label', { class: 'ctl ctl-toggle', title: 'Edits to the selected layer go to every layer' },
+      h('span', { class: 'ctl-label' }, 'Change all layers together'),
+      h('span', { class: 'switch' }, this.linkToggle, h('span', { class: 'switch-track' })),
+    ),
+    this.linkNote,
+  );
+
+  setLinked(on: boolean): void {
+    this.store.linked = on;
+    this.renderLink();
+  }
+
+  private renderLink(): void {
+    const n = this.store.get().layers.length;
+    this.linkRow.hidden = n < 2;
+    this.linkToggle.checked = this.store.linked;
+    this.linkNote.hidden = !this.store.linked;
+    this.linkNote.textContent = `Every edit below changes all ${n} layers \u2014 except each `
+      + 'layer\u2019s own ink, colour, screen angle and seed, which are what make it that plate.';
   }
 
   /**
@@ -85,7 +115,7 @@ export class LayersPanel {
   private separateMenu(): HTMLElement {
     const sel = h('select', { class: 'separate-select' }) as HTMLSelectElement;
     const options = (): void => {
-      sel.replaceChildren(h('option', { value: '' }, 'Separate into inks…'));
+      sel.replaceChildren(h('option', { value: '' }, 'Split into ink plates…'));
       if (this.beforeSeparation) {
         sel.append(h('option', { value: RESTORE },
           `↩ Back to the ${this.beforeSeparation.length}-layer stack from before`));
@@ -104,6 +134,7 @@ export class LayersPanel {
         if (!this.beforeSeparation) return;
         this.store.replaceLayers(this.beforeSeparation);
         this.beforeSeparation = null;
+        this.store.linked = false;
       } else {
         const kind = SEPARATIONS[choice];
         if (!kind) return;
@@ -113,6 +144,9 @@ export class LayersPanel {
         // CMYK plates.
         if (!this.beforeSeparation) this.beforeSeparation = structuredClone(project.layers);
         this.store.replaceLayers(buildSeparation(kind, project.canvas));
+        // Plates are edited as a set — one dot size, one lineature — so the set
+        // starts linked. The note under the stack says so, and one switch undoes it.
+        this.store.linked = true;
       }
       options();
       this.render();
@@ -127,6 +161,7 @@ export class LayersPanel {
    */
   forgetSeparation(): void {
     this.beforeSeparation = null;
+    this.store.linked = false;
     this.refreshSeparateMenu();
   }
 
@@ -167,6 +202,7 @@ export class LayersPanel {
 
   render(): void {
     const layers = this.store.get().layers;
+    this.renderLink();
     if (this.selected && !layers.some((l) => l.id === this.selected)) {
       this.selected = layers[layers.length - 1]?.id ?? null;
       if (this.selected) this.onSelect(this.selected);
