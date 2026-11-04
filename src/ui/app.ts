@@ -95,6 +95,9 @@ export class App {
     );
 
     root.append(this.buildLayout());
+    this.toolbarAnchor = this.compare.el.previousElementSibling;
+    this.placeCompare();
+    this.stacked.addEventListener('change', () => this.placeCompare());
     installTouchSliders(root);
     this.bindViewport();
     this.bindDrop();
@@ -202,6 +205,8 @@ export class App {
             this.store.requestRedraw();
           }, '', 'View at one canvas pixel per screen pixel'),
         ),
+        // How you look at the picture sits with how it is framed.
+        this.compare.el,
         h('div', { class: 'tool-group' },
           button('Undo', () => this.store.undo(), '', 'Undo (⌘Z)'),
           button('Redo', () => this.store.redo(), '', 'Redo (⇧⌘Z)'),
@@ -222,6 +227,7 @@ export class App {
           button('Load', () => void this.loadProject(), '', 'Open a saved project file'),
         ),
       ),
+      this.compareRow,
       h('main', { class: 'main' },
         this.stage,
         // Global first, then the stack, then the selected layer's chain: the
@@ -630,7 +636,26 @@ export class App {
   private splitHandle = h('div', { class: 'split-handle', hidden: '' }, h('span', { class: 'split-grip' }));
   private compare = this.buildCompare();
   private stage = h('div', { class: 'stage' },
-    this.canvas, this.splitHandle, this.compare.el, this.dropZone, this.hud, this.toast);
+    this.canvas, this.splitHandle, this.dropZone, this.hud, this.toast);
+
+  /**
+   * On an upright phone the toolbar is one row that scrolls sideways, which
+   * would hide the view switch off-screen most of the time. So there it moves
+   * to a slim row of its own under the toolbar; everywhere else it sits beside
+   * Fit. The query is the stylesheet's stacked-layout one.
+   */
+  private compareRow = h('div', { class: 'compare-row' });
+  private stacked = window.matchMedia('(max-width: 760px) and (min-height: 501px), (orientation: portrait) and (max-width: 1100px)');
+
+  private placeCompare(): void {
+    const el = this.compare.el;
+    if (this.stacked.matches) {
+      if (el.parentElement !== this.compareRow) this.compareRow.append(el);
+    } else if (el.parentElement === this.compareRow) {
+      this.toolbarAnchor?.after(el);
+    }
+  }
+  private toolbarAnchor: Element | null = null;
 
   /**
    * Compare the drawing with the photo it came from, on screen only.
@@ -655,7 +680,7 @@ export class App {
     });
     const under = h('input', { type: 'range', min: '0', max: '100', step: '1', value: '0' }) as HTMLInputElement;
     const underRow = h('label', { class: 'ctl compare-under', title: 'Let the photo show faintly through the paper under the dots' },
-      h('span', { class: 'ctl-label' }, 'Photo under'), under);
+      h('span', { class: 'ctl-label' }, 'Under'), under);
     under.addEventListener('input', () => {
       this.engine.setPreview({ under: Number(under.value) / 100 });
       under.style.setProperty('--fill', `${under.value}%`);
@@ -711,6 +736,7 @@ export class App {
   private placeSplit(): void {
     const hasPicture = this.dropZone.hidden;
     this.compare.el.hidden = !hasPicture;
+    this.compareRow.hidden = !hasPicture || this.compare.el.parentElement !== this.compareRow;
     if (this.splitHandle.hidden || !hasPicture) return;
     const r = this.pictureRect();
     const split = this.engine.getPreview().split;

@@ -199,24 +199,36 @@ select:hover { background: var(--hover); }
 .toast.visible { opacity: 1; }
 .toast.error { border-color: var(--danger); color: var(--danger); }
 
-/* Compare, on screen only: which view, and how much photo under the paper. */
-.compare {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 6px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-}
+/* Compare, on screen only: which view, and how much photo under the paper.
+   Deliberately quiet — small, grey, no accent. The active view is pressed in
+   rather than lit, because orange in this chrome means "this changes the work"
+   and this changes only what you are looking at. */
+.compare { display: flex; align-items: center; gap: 8px; }
 .compare[hidden] { display: none; }
-.compare .btn.on { background: var(--accent); color: var(--accent-text); }
-.compare .ctl.compare-under { grid-template-columns: auto 1fr; gap: 6px; min-height: 0; }
+.compare .btn { padding: 2px 7px; font-size: 10px; color: var(--text-dim); background: var(--panel-2); }
+.compare .btn:hover { background: var(--panel-3); }
+.compare .btn.on { background: var(--field); color: var(--text); font-weight: 600; box-shadow: inset 0 1px 0 var(--line-soft); }
+.compare .btn:active { background: var(--field); }
+.compare .ctl.compare-under { display: flex; align-items: center; gap: 5px; min-height: 0; }
 .compare .ctl.compare-under[hidden] { display: none; }
-.compare-under input[type='range'] { width: 100px; }
+.compare-under .ctl-label { font-size: 10px; color: var(--text-faint); }
+.compare-under input[type='range'] { width: 64px; height: 14px; }
+.compare-under input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  background: linear-gradient(to right, var(--track) 0 var(--fill, 0%), var(--field) var(--fill, 0%) 100%);
+}
+.compare-under input[type='range']::-webkit-slider-thumb { height: 12px; margin-top: -4px; width: 3px; }
+.compare-under input[type='range']::-moz-range-progress { background: var(--track); }
+
+/* Its own slim row on an upright phone, under the scrolling toolbar. */
+.compare-row {
+  display: flex;
+  justify-content: center;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+.compare-row[hidden], .compare-row:empty { display: none; }
 
 /* The split divider: a hit area much wider than the line it carries, so a
    thumb can find it. The orange line itself is drawn by the engine. */
@@ -984,10 +996,10 @@ input[type='range']::-moz-range-thumb {
      catches the thumb and the page stops moving. The stack just grows. */
   .layer-list { max-height: none; overflow: visible; }
 
-  .compare { top: 6px; right: 6px; padding: 4px; gap: 4px; }
-  .compare-under input[type='range'] { width: 84px; }
-  .compare .btn { padding: 4px 8px; font-size: 12px; }
-  .compare .ctl.compare-under { font-size: 12px; }
+  /* Small but still a fingertip: one row, the switch and the slider. */
+  .compare .btn { padding: 5px 12px; font-size: 12px; }
+  .compare-under .ctl-label { font-size: 12px; }
+  .compare-under input[type='range'] { width: 110px; height: 30px; }
 
   /* Frame timings are for tuning the engine, not for a phone screen. */
   .hud { display: none; }
