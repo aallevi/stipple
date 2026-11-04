@@ -301,12 +301,19 @@ export function paletteControl(opts: {
   set(v: [number, number, number, number][]): void;
   title?: string;
   interaction?: Interaction;
+  /** Offer a × on each swatch that removes that one colour. */
+  remove?(index: number): void;
+  /** A name per swatch, for its tooltip and its remove button. */
+  names?(): string[];
 }): Control {
   const row = h('div', { class: 'palette-row' });
   let inputs: HTMLInputElement[] = [];
+  let removers: HTMLButtonElement[] = [];
 
   const rebuild = (n: number): void => {
     inputs = [];
+    removers = [];
+    const cells: HTMLElement[] = [];
     for (let i = 0; i < n; i++) {
       const sw = h('input', { type: 'color', class: 'swatch ink' }) as HTMLInputElement;
       sw.title = `Ink ${i + 1}`;
@@ -318,8 +325,19 @@ export function paletteControl(opts: {
       });
       bindDrag(sw, opts.interaction);
       inputs.push(sw);
+      if (opts.remove && n > 1) {
+        // Removing a colour is removing a screen, so it is one exact press on
+        // the swatch it belongs to — not a count slider that drops whichever
+        // colour happens to be last.
+        const x = h('button', { class: 'swatch-remove', type: 'button' }, '\u00d7') as HTMLButtonElement;
+        x.addEventListener('click', () => opts.remove!(i));
+        removers.push(x);
+        cells.push(h('span', { class: 'swatch-cell' }, sw, x));
+      } else {
+        cells.push(sw);
+      }
     }
-    row.replaceChildren(...inputs);
+    row.replaceChildren(...cells);
   };
 
   return {
@@ -330,7 +348,12 @@ export function paletteControl(opts: {
     sync() {
       const p = opts.get();
       if (inputs.length !== p.length) rebuild(p.length);
-      p.forEach((c, i) => { inputs[i].value = rgbToHex(c[0], c[1], c[2]); });
+      const names = opts.names?.() ?? [];
+      p.forEach((c, i) => {
+        inputs[i].value = rgbToHex(c[0], c[1], c[2]);
+        if (names[i]) inputs[i].title = names[i];
+        if (removers[i]) removers[i].title = `Remove ${names[i] ?? `ink ${i + 1}`}`;
+      });
     },
   };
 }

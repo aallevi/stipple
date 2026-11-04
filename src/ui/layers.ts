@@ -310,7 +310,7 @@ export class LayersPanel {
     const name = h('input', { class: 'layer-name' }) as HTMLInputElement;
     name.value = group.name;
     name.addEventListener('change', () => this.store.updateGroup(group.id, { name: name.value }));
-    name.addEventListener('click', (e) => e.stopPropagation());
+    this.selectThenRename(name, () => this.selectedGroup === group.id, () => this.selectGroup(group.id));
 
     const ungroup = h('button', { class: 'group-ungroup', type: 'button', title: 'Ungroup — keep the layers, drop the folder' }, '⇱');
     ungroup.addEventListener('click', (e) => {
@@ -348,7 +348,7 @@ export class LayersPanel {
     const name = h('input', { class: 'layer-name' }) as HTMLInputElement;
     name.value = layer.name;
     name.addEventListener('change', () => this.store.updateLayer(layer.id, { name: name.value }));
-    name.addEventListener('click', (e) => e.stopPropagation());
+    this.selectThenRename(name, () => layer.id === this.selected && !this.selectedGroup, () => this.select(layer.id));
 
     // A colour layer shows its colour, so a group of them reads as a palette.
     const chip = layer.color.mode === 'solid'
@@ -369,6 +369,23 @@ export class LayersPanel {
     row.addEventListener('click', () => this.select(layer.id));
     row.addEventListener('pointerdown', (e) => this.beginDrag(e, row, { layer: layer.id }));
     return row;
+  }
+
+  /**
+   * A row's name is most of the row, so clicking it has to select the row; it
+   * renames only once the row is already selected — the way a file's name
+   * behaves in a file browser.
+   */
+  private selectThenRename(name: HTMLInputElement, isSelected: () => boolean, select: () => void): void {
+    name.readOnly = !isSelected();
+    name.addEventListener('pointerdown', (e) => {
+      if (isSelected()) return;
+      e.preventDefault();
+      select();
+    });
+    name.addEventListener('click', (e) => {
+      if (isSelected()) e.stopPropagation();
+    });
   }
 
   /**
@@ -435,16 +452,19 @@ export class LayersPanel {
    * is directly under an open folder's row: that is the top of the group, and
    * a layer dropped there joins it.
    */
-  private dropAt(slot: number): { index: number; into?: string } {
+  private dropAt(slot: number): { index: number; into: string | null } {
     const rows = [...this.list.querySelectorAll<HTMLElement>('.layer-row')];
-    if (!rows.length) return { index: 0 };
-    if (slot >= rows.length) return { index: Number(rows[rows.length - 1].dataset.bottom) };
+    if (!rows.length) return { index: 0, into: null };
+    if (slot >= rows.length) return { index: Number(rows[rows.length - 1].dataset.bottom), into: null };
     const row = rows[slot];
     const prev = rows[slot - 1];
-    if (prev?.dataset.group && row.dataset.groupOf === prev.dataset.group) {
-      return { index: Number(row.dataset.top) + 1, into: prev.dataset.group };
-    }
-    return { index: Number(row.dataset.top) + 1 };
+    // A drop says exactly where it lands, rather than leaving the store to
+    // guess from neighbours: between two of a group's layers, or just under
+    // its folder row, is inside it; every other line is outside, including
+    // the one just under a group's last layer.
+    const inside = row.dataset.groupOf
+      && (prev?.dataset.group === row.dataset.groupOf || prev?.dataset.groupOf === row.dataset.groupOf);
+    return { index: Number(row.dataset.top) + 1, into: inside ? row.dataset.groupOf! : null };
   }
 
   /** Which insertion slot a pointer at `clientY` is nearest. */

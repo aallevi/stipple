@@ -416,7 +416,8 @@ select:hover { background: var(--hover); }
   padding: 1px 4px;
   min-width: 0;
 }
-.layer-name:hover { border-color: var(--line-soft); }
+.layer-name:not([readonly]):hover { border-color: var(--line-soft); }
+.layer-name[readonly] { cursor: default; }
 .layer-name:focus { border-color: var(--line); outline: none; background: #e6e6e6; }
 
 .layer-meta {
@@ -732,6 +733,27 @@ input[type='range']::-moz-range-thumb {
   flex: 0 0 auto;
 }
 
+/* A swatch you can remove: the × sits on its corner, always visible, because a
+   phone has no hover to reveal it. */
+.swatch-cell { position: relative; display: inline-flex; }
+.swatch-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel-3);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.swatch-remove:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+.palette-row:has(.swatch-cell) { gap: 7px; padding-top: 4px; }
+
 .readout {
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -984,6 +1006,8 @@ input[type='range']::-moz-range-thumb {
   .swatch { width: 40px; height: 28px; }
   .color-pair { grid-template-columns: 40px 1fr; }
   .swatch.ink { width: 34px; height: 30px; }
+  .swatch-remove { width: 20px; height: 20px; top: -8px; right: -8px; font-size: 13px; }
+  .palette-row:has(.swatch-cell) { gap: 12px; padding-top: 8px; }
 
   /* The grip is the one part of a row that does not scroll the list, so a
      drag that starts there reorders and one that starts anywhere else scrolls. */

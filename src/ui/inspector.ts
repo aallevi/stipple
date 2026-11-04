@@ -751,9 +751,21 @@ export class Inspector {
       nearestByTone: src.color.mode === 'spot' && src.color.matchBy === 'tone',
     };
     const pinned = src.color.pinned ?? [];
-    const group = { id: uid('group'), name: 'Spot colours', collapsed: false };
-    const layers = buildColourLayers(colours, group.id, template, colours.map((c) => pinned.some((p) => same(p, c))));
-    s.replaceLayerWithGroup(id, layers, group);
+    const picked = colours.map((c) => pinned.some((p) => same(p, c)));
+    // Groups do not nest: a layer already in one (a CMYK plate, say) becomes
+    // ink layers of that same group rather than a folder inside a folder.
+    const existing = src.groupId ? s.group(src.groupId) : undefined;
+    const group = existing ?? { id: uid('group'), name: 'Spot colours', collapsed: false };
+    const layers = buildColourLayers(colours, group.id, template, picked);
+    if (existing) {
+      s.batch(`to-group:${id}`, () => {
+        const at = s.get().layers.findIndex((l) => l.id === id);
+        s.removeLayer(id);
+        layers.forEach((l, k) => s.addLayer(l, at + k));
+      });
+    } else {
+      s.replaceLayerWithGroup(id, layers, group);
+    }
     this.selectGroup(group.id);
   }
 
@@ -863,6 +875,11 @@ export class Inspector {
       }),
       paletteControl({
         label: 'Palette', interaction: ia,
+        names: () => peers().map((l) => l.name),
+        remove: (i) => {
+          const l = peers()[i];
+          if (l && peers().length > 1) s.removeLayer(l.id);
+        },
         get: () => peers().map((l) => (l.prefilter.ink ?? l.color.color) as [number, number, number, number]),
         set: (v) => {
           const list = peers();
