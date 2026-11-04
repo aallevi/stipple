@@ -10,7 +10,7 @@ import { testCard } from '../image/testcard';
 import { Engine } from '../pipeline/engine';
 import { decodeNative, openFile, saveFile, saveFiles, supportedImageExtensions } from '../platform';
 import { rasterBitmap } from '../shape/import';
-import { button, colorControl, h, readout, section, select, slider, type Control, type Interaction } from './controls';
+import { button, colorControl, h, readout, section, select, slider, type Control, type Interaction, installTouchSliders } from './controls';
 import { Inspector } from './inspector';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
@@ -80,6 +80,7 @@ export class App {
     );
 
     root.append(this.buildLayout());
+    installTouchSliders(root);
     this.bindViewport();
     this.bindKeys();
 
@@ -123,6 +124,7 @@ export class App {
         const preset = PRESETS.find((p) => p.name === name);
         if (!preset) return false;
         const project = this.store.get();
+        this.layers.forgetSeparation();
         this.store.load({
           ...preset.build(project.canvas.width, project.canvas.height),
           shapes: project.shapes,
@@ -146,6 +148,7 @@ export class App {
       const preset = PRESETS.find((p) => p.name === presetSel.value);
       if (!preset) return;
       const project = this.store.get();
+      this.layers.forgetSeparation();
       this.store.load({
         ...preset.build(project.canvas.width, project.canvas.height),
         shapes: project.shapes,
@@ -171,6 +174,7 @@ export class App {
           button('Fit', () => this.fitToWindow(), '', 'Fit the canvas to the window (0)'),
           button('100%', () => {
             this.engine.setViewport({ zoom: 1, panX: 0, panY: 0 });
+            this.fitted = false;
             this.store.requestRedraw();
           }, '', 'View at one canvas pixel per screen pixel'),
         ),
@@ -315,63 +319,105 @@ export class App {
   // -- viewport ------------------------------------------------------------
 
   private bindViewport(): void {
-    let dragging = false;
-    let lastX = 0;
-    let lastY = 0;
+    // Every pointer on the canvas, by id. One pans; two pinch — zooming by the
+    // change in their spread and panning by the travel of their midpoint, so
+    // the point between your fingers stays under your fingers.
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinch: { dist: number; midX: number; midY: number } | null = null;
+
+    const spread = (): { dist: number; midX: number; midY: number } => {
+      const [a, b] = [...pointers.values()];
+      return { dist: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2 };
+    };
 
     this.canvas.addEventListener('pointerdown', (e) => {
-      dragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       this.canvas.setPointerCapture(e.pointerId);
+      pinch = pointers.size === 2 ? spread() : null;
     });
     this.canvas.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const v = this.engine.getViewport();
-      this.engine.setViewport({ panX: v.panX + (e.clientX - lastX), panY: v.panY + (e.clientY - lastY) });
-      lastX = e.clientX;
-      lastY = e.clientY;
+      const p = pointers.get(e.pointerId);
+      if (!p) return;
+      const dx = e.clientX - p.x;
+      const dy = e.clientY - p.y;
+      p.x = e.clientX;
+      p.y = e.clientY;
+      if (pinch && pointers.size === 2) {
+        const now = spread();
+        const v = this.engine.getViewport();
+        this.engine.setViewport({ panX: v.panX + now.midX - pinch.midX, panY: v.panY + now.midY - pinch.midY });
+        if (pinch.dist > 0) this.zoomAbout(now.midX, now.midY, v.zoom * (now.dist / pinch.dist));
+        pinch = now;
+      } else if (pointers.size === 1) {
+        const v = this.engine.getViewport();
+        this.engine.setViewport({ panX: v.panX + dx, panY: v.panY + dy });
+      } else {
+        return;
+      }
+      this.fitted = false;
       this.store.requestRedraw();
     });
     const stop = (e: PointerEvent): void => {
-      dragging = false;
+      pointers.delete(e.pointerId);
       this.canvas.releasePointerCapture?.(e.pointerId);
+      // Lifting one finger of a pinch leaves the other panning from where it is.
+      pinch = null;
     };
     this.canvas.addEventListener('pointerup', stop);
     this.canvas.addEventListener('pointercancel', stop);
+    this.canvas.addEventListener('dblclick', () => this.fitToWindow());
 
     this.canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const v = this.engine.getViewport();
-      const factor = Math.exp(-e.deltaY * 0.0015);
-      const zoom = Math.min(8, Math.max(0.05, v.zoom * factor));
-      // Zoom about the cursor. Anchoring to the canvas centre instead means the
-      // detail you were looking at slides off screen as you zoom into it, which
-      // is what makes a zoomed-in view impossible to relate to the whole image.
-      const { width, height } = this.store.get().canvas;
-      const rect = this.canvas.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const px = (cx - v.panX - (rect.width - width * v.zoom) / 2) / v.zoom;
-      const py = (cy - v.panY - (rect.height - height * v.zoom) / 2) / v.zoom;
-      this.engine.setViewport({
-        zoom,
-        panX: cx - (rect.width - width * zoom) / 2 - px * zoom,
-        panY: cy - (rect.height - height * zoom) / 2 - py * zoom,
-      });
+      this.zoomAbout(e.clientX, e.clientY, v.zoom * Math.exp(-e.deltaY * 0.0015));
+      this.fitted = false;
       this.store.requestRedraw();
     }, { passive: false });
 
-    window.addEventListener('resize', () => this.store.requestRedraw());
+    // Rotating a phone, or a window resize, keeps a fitted view fitted. A view
+    // you have framed by hand is left exactly where you put it.
+    window.addEventListener('resize', () => {
+      if (this.fitted) this.fitToWindow();
+      else this.store.requestRedraw();
+    });
   }
+
+  /**
+   * Zoom about a point on screen. Anchoring to the canvas centre instead means
+   * the detail you were looking at slides off screen as you zoom into it, which
+   * is what makes a zoomed-in view impossible to relate to the whole image.
+   */
+  private zoomAbout(clientX: number, clientY: number, target: number): void {
+    const v = this.engine.getViewport();
+    const zoom = Math.min(8, Math.max(0.05, target));
+    const { width, height } = this.store.get().canvas;
+    const rect = this.canvas.getBoundingClientRect();
+    const cx = clientX - rect.left;
+    const cy = clientY - rect.top;
+    const px = (cx - v.panX - (rect.width - width * v.zoom) / 2) / v.zoom;
+    const py = (cy - v.panY - (rect.height - height * v.zoom) / 2) / v.zoom;
+    this.engine.setViewport({
+      zoom,
+      panX: cx - (rect.width - width * zoom) / 2 - px * zoom,
+      panY: cy - (rect.height - height * zoom) / 2 - py * zoom,
+    });
+  }
+
+  /** Whether the view is still the one `fitToWindow` chose. */
+  private fitted = true;
 
   private fitToWindow(): void {
     const { width, height } = this.store.get().canvas;
     const rect = this.canvas.getBoundingClientRect();
-    const zoom = Math.min((rect.width - 48) / width, (rect.height - 48) / height);
+    // A smaller margin on a small screen, where 48px is a sixth of the width.
+    const margin = Math.min(48, Math.min(rect.width, rect.height) * 0.06);
+    const zoom = Math.min((rect.width - margin) / width, (rect.height - margin) / height);
     this.engine.setViewport({ zoom: Math.max(0.05, zoom), panX: 0, panY: 0 });
+    this.fitted = true;
     this.store.requestRedraw();
   }
+
 
   private bindKeys(): void {
     window.addEventListener('keydown', (e) => {
@@ -540,6 +586,7 @@ export class App {
       const ids = new Set(project.shapes.map((s) => s.id));
       project.shapes = [...BUILTIN_SHAPES.filter((s) => !ids.has(s.id)), ...project.shapes];
 
+      this.layers.forgetSeparation();
       this.store.load(project);
       // Raster shapes carry their pixels as data URLs; decode them before the
       // atlas tries to build distance fields.

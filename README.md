@@ -84,7 +84,8 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
   flat posterised bands (0) to dithered colour (1). *Leave paper* keeps the highlights
   as bare stock.
 - **Process.** Choose *Separate into inks…* above the layer list to rebuild the stack
-  as CMYK, CMY, duotone or tritone plates, each with its own screen angle.
+  as CMYK, CMY, duotone or tritone plates, each with its own screen angle. The same
+  menu offers *↩ Back to the stack from before* afterwards.
 - **Plates.** The *Plates* button writes one SVG film per ink, solid black on white,
   plus a colour proof. Every film has identical registration marks. It lists the
   screens it found before writing anything.
@@ -98,7 +99,9 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
 | `⌘]` / `⌘[` | Raise / lower the selected layer |
 | `0` | Fit to window |
 
-Use `Ctrl` instead of `⌘` on Windows and Linux. You can also reorder layers by dragging
+Use `Ctrl` instead of `⌘` on Windows and Linux. On the canvas, drag to pan, scroll or
+pinch to zoom, and double-click or double-tap to fit. It works on a phone too: swipe
+up and down to scroll the controls, and drag sideways to move a slider. You can also reorder layers by dragging
 the grip, and add a shape by dropping an SVG or PNG on the shape panel.
 
 ### Files

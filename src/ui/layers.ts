@@ -4,6 +4,8 @@ import type { Layer } from '../core/types';
 import { button, h } from './controls';
 import { buildSeparation, SEPARATIONS } from './separations';
 
+const RESTORE = '__restore';
+
 /**
  * The layer stack.
  *
@@ -18,6 +20,14 @@ export class LayersPanel {
   /** The line showing where a dragged row would land. */
   private marker = h('div', { class: 'layer-drop-marker' });
   selected: string | null = null;
+  /**
+   * The stack as it was before the first separation, so there is a way back
+   * that does not depend on undo. Undo gets there too, but only by also
+   * unwinding every edit made to the plates since — and nothing on screen
+   * says it would work at all.
+   */
+  private beforeSeparation: Layer[] | null = null;
+  private refreshSeparateMenu: () => void = () => {};
 
   constructor(private store: Store, private onSelect: (id: string) => void) {
     this.el.append(
@@ -74,24 +84,50 @@ export class LayersPanel {
    */
   private separateMenu(): HTMLElement {
     const sel = h('select', { class: 'separate-select' }) as HTMLSelectElement;
-    sel.append(h('option', { value: '' }, 'Separate into inks…'));
-    for (const [key, kind] of Object.entries(SEPARATIONS)) {
-      sel.append(h('option', { value: key }, kind.label));
-    }
-    sel.addEventListener('change', () => {
-      const kind = SEPARATIONS[sel.value];
-      sel.value = '';
-      if (!kind) return;
-      const project = this.store.get();
-      if (project.layers.length > 1 || project.layers[0]?.prefilter.channel === 'ink') {
-        if (!confirm(`Replace the current ${project.layers.length}-layer stack with ` +
-          `${kind.inks.length} ink plates?`)) return;
+    const options = (): void => {
+      sel.replaceChildren(h('option', { value: '' }, 'Separate into inks…'));
+      if (this.beforeSeparation) {
+        sel.append(h('option', { value: RESTORE },
+          `↩ Back to the ${this.beforeSeparation.length}-layer stack from before`));
       }
-      this.store.replaceLayers(buildSeparation(kind, project.canvas));
+      for (const [key, kind] of Object.entries(SEPARATIONS)) {
+        sel.append(h('option', { value: key }, kind.label));
+      }
+    };
+    this.refreshSeparateMenu = options;
+    options();
+
+    sel.addEventListener('change', () => {
+      const choice = sel.value;
+      sel.value = '';
+      if (choice === RESTORE) {
+        if (!this.beforeSeparation) return;
+        this.store.replaceLayers(this.beforeSeparation);
+        this.beforeSeparation = null;
+      } else {
+        const kind = SEPARATIONS[choice];
+        if (!kind) return;
+        const project = this.store.get();
+        // Keep the first stack only: separating CMYK and then trying duotone
+        // should still lead back to the picture you started from, not to the
+        // CMYK plates.
+        if (!this.beforeSeparation) this.beforeSeparation = structuredClone(project.layers);
+        this.store.replaceLayers(buildSeparation(kind, project.canvas));
+      }
+      options();
       this.render();
       this.select(this.store.get().layers[this.store.get().layers.length - 1].id);
     });
     return h('div', { class: 'separate-row' }, sel);
+  }
+
+  /**
+   * Drop the remembered pre-separation stack, for when the document is replaced
+   * wholesale (a preset, a loaded project) and that stack no longer belongs to it.
+   */
+  forgetSeparation(): void {
+    this.beforeSeparation = null;
+    this.refreshSeparateMenu();
   }
 
   add(): void {

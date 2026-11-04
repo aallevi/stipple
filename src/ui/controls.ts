@@ -448,3 +448,86 @@ export function rgbToHex(r: number, g: number, b: number): string {
     Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0');
   return `#${c(r)}${c(g)}${c(b)}`;
 }
+
+/**
+ * Sliders under a finger, for touch screens.
+ *
+ * A native range input takes a touch on its track as "jump here", so on a phone
+ * — where the sidebar is wall-to-wall sliders — every attempt to scroll the panel
+ * lands on one and silently changes a setting on the way. Under a coarse pointer
+ * the stylesheet makes range inputs pointer-transparent and this takes over:
+ * a gesture that goes vertical first is left to the browser and scrolls, and one
+ * that goes sideways first drags the slider *relative to where it was*, a full
+ * track width for the full range. A tap does nothing, as on iOS. The rest of the
+ * kit never knows: the input receives the same input and change events a mouse
+ * drag would produce, and the same pointerdown/up that hold preview quality.
+ */
+export function installTouchSliders(root: HTMLElement): void {
+  const coarse = window.matchMedia('(pointer: coarse)');
+  const SLOP = 8;
+
+  root.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch' || !coarse.matches) return;
+    const row = (e.target as HTMLElement).closest('.ctl');
+    const ranges = row ? [...row.querySelectorAll<HTMLInputElement>('input[type=range]')] : [];
+    if (!ranges.length) return;
+    const track = ranges[0].getBoundingClientRect();
+    // The label and the number field keep their own behaviour.
+    if (e.clientX < track.left - SLOP || e.clientX > track.right + SLOP) return;
+
+    const id = e.pointerId;
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let input: HTMLInputElement | null = null;
+    let start = 0;
+
+    const range = (el: HTMLInputElement): { min: number; max: number; step: number } => ({
+      min: parseFloat(el.min) || 0,
+      max: parseFloat(el.max) || 100,
+      step: parseFloat(el.step) || 0,
+    });
+
+    const move = (ev: PointerEvent): void => {
+      if (ev.pointerId !== id) return;
+      const dx = ev.clientX - x0;
+      if (!input) {
+        if (Math.abs(ev.clientY - y0) > SLOP) return finish();
+        if (Math.abs(dx) <= SLOP) return;
+        // Two handles on one track: take the one nearer where the finger came down.
+        input = ranges.reduce((best, el) => {
+          const r = range(el);
+          const at = (el: HTMLInputElement): number =>
+            track.left + ((parseFloat(el.value) - r.min) / (r.max - r.min || 1)) * track.width;
+          return Math.abs(at(el) - x0) < Math.abs(at(best) - x0) ? el : best;
+        });
+        start = parseFloat(input.value);
+        input.dispatchEvent(new PointerEvent('pointerdown'));
+      }
+      const r = range(input);
+      let v = start + (dx / Math.max(1, track.width)) * (r.max - r.min);
+      if (r.step > 0) v = r.min + Math.round((v - r.min) / r.step) * r.step;
+      v = Math.min(r.max, Math.max(r.min, v));
+      if (String(v) !== input.value) {
+        input.value = String(v);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    };
+
+    const finish = (): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (!input) return;
+      input.dispatchEvent(new PointerEvent('pointerup'));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input = null;
+    };
+    const up = (ev: PointerEvent): void => {
+      if (ev.pointerId === id) finish();
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  });
+}

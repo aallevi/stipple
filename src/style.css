@@ -60,6 +60,7 @@ body {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
@@ -180,7 +181,7 @@ select:hover { background: var(--hover); }
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
-.hud-chip { display: flex; gap: 4px; align-items: baseline; }
+.hud-chip { display: flex; gap: 4px; align-items: baseline; white-space: nowrap; }
 .hud-key { color: var(--text-faint); }
 
 .toast {
@@ -650,6 +651,133 @@ input[type='range']::-moz-range-thumb {
   cursor: pointer;
 }
 .shape-del:hover { color: var(--danger); }
+
+/* -- touch -------------------------------------------------------------- */
+
+/* Finger-sized everything, on any touch screen: phones either way up, and
+   tablets beside the desktop layout. Fields and menus go to 16px because iOS
+   zooms the whole page into any input with smaller text the moment it is
+   tapped, and then leaves it zoomed. */
+@media (pointer: coarse) {
+  :root { --num-w: 76px; }
+  body { font-size: 13px; }
+
+  .btn { padding: 7px 12px; }
+  .btn.sm { padding: 5px 10px; }
+  .btn.icon { width: 34px; height: 32px; font-size: 15px; }
+  select, .ctl .num, .layer-name { font-size: 16px; }
+  select { padding: 6px 10px; }
+  .ctl .num { padding: 4px 6px; }
+
+  .panel-head, .section-head, .section-toggle { min-height: 40px; }
+  .section-body > * + * { margin-top: 10px; }
+  .ctl { min-height: 34px; }
+
+  /* Range inputs ignore the finger entirely; `installTouchSliders` reads the
+     gesture off the row instead, so that a swipe meant to scroll the panel can
+     never move a value on its way past. */
+  .ctl { touch-action: pan-y; }
+  input[type='range'] { height: 34px; pointer-events: none; }
+  .dual input[type='range']::-webkit-slider-thumb { pointer-events: none; }
+  .dual input[type='range']::-moz-range-thumb { pointer-events: none; }
+  input[type='range']::-webkit-slider-runnable-track { height: 12px; }
+  input[type='range']::-webkit-slider-thumb { width: 6px; height: 26px; margin-top: -8px; }
+  input[type='range']::-moz-range-track { height: 10px; }
+  input[type='range']::-moz-range-progress { height: 10px; }
+  input[type='range']::-moz-range-thumb { width: 6px; height: 26px; }
+  .dual { height: 34px; }
+  .dual-track, .dual-fill { top: 11px; height: 12px; }
+
+  .switch { width: 44px; height: 24px; }
+  .switch-track::after { top: 4px; left: 4px; width: 14px; height: 14px; }
+  .switch-input:checked + .switch-track::after { right: 4px; }
+
+  .swatch { width: 40px; height: 28px; }
+  .color-pair { grid-template-columns: 40px 1fr; }
+  .swatch.ink { width: 34px; height: 30px; }
+
+  /* The grip is the one part of a row that does not scroll the list, so a
+     drag that starts there reorders and one that starts anywhere else scrolls. */
+  .layer-row { grid-template-columns: 24px 18px 1fr auto; padding: 4px 8px 4px 2px; }
+  .layer-grip { font-size: 18px; padding: 6px 0; touch-action: none; }
+  .vis { font-size: 14px; }
+
+  .shape-tile { padding: 8px 2px 5px; }
+  .shape-del { font-size: 18px; padding: 0 5px; }
+}
+
+/* -- phone --------------------------------------------------------------- */
+
+/* One column: the picture on top, the controls scrolling underneath it, so
+   every change is seen as it is made. The canvas keeps a fixed share of the
+   screen rather than scrolling away with the panel. Any narrow window gets
+   this, and so does any upright one short of a desktop monitor — a tablet held
+   vertically has no width to spare for a sidebar either. */
+@media (max-width: 760px), (orientation: portrait) and (max-width: 1100px) {
+  :root { --label-w: 96px; }
+
+  .app { height: 100vh; height: 100dvh; }
+
+  /* One row that scrolls sideways, as on a phone turned on its side, so the
+     toolbar costs one row of the screen instead of three. */
+  .toolbar {
+    gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+      6px max(8px, env(safe-area-inset-left));
+  }
+  .toolbar::-webkit-scrollbar { display: none; }
+  .toolbar > * { flex-shrink: 0; }
+  .spacer, .tool-caption { display: none; }
+
+  .main { flex-direction: column; }
+  .stage {
+    flex: 0 0 auto;
+    height: 46vh;
+    height: 46dvh;
+    min-height: 200px;
+    border-bottom: 1px solid var(--line);
+  }
+  .sidebar {
+    flex: 1 1 auto;
+    min-height: 0;
+    border-left: none;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .layer-list { max-height: 168px; }
+
+  /* Frame timings are for tuning the engine, not for a phone screen. */
+  .hud { display: none; }
+  .toast { bottom: 12px; max-width: 92%; text-align: center; }
+}
+
+/* A phone on its side: height is the scarce thing, so the toolbar keeps to one
+   row and scrolls sideways instead of wrapping onto a second. */
+@media (pointer: coarse) and (max-height: 500px) {
+  .toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+  .toolbar::-webkit-scrollbar { display: none; }
+  .toolbar > * { flex-shrink: 0; }
+  .spacer, .tool-caption, .hud { display: none; }
+
+  /* Side by side again, whatever the width: stacked, the picture would get a
+     strip a few fingers tall. */
+  .main { flex-direction: row; }
+  .stage { flex: 1 1 auto; height: auto; min-height: 0; border-bottom: none; }
+  .sidebar {
+    flex: 0 0 min(320px, 46vw);
+    border-left: 1px solid var(--line);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
 
 /* -- fatal --------------------------------------------------------------- */
 
