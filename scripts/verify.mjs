@@ -605,8 +605,8 @@ const spot = await page.evaluate(async () => {
   }
   s.engine.setSource({ width: W, height: H, rgba });
   s.applyPreset((await s.presets())[0]);
-  const sel = [...document.querySelectorAll('.ctl')].find((r) => r.querySelector('.ctl-label')?.textContent === 'Colour mode')?.querySelector('select');
-  sel.value = 'spot';
+  const sel = document.querySelector('.make-print-select');
+  sel.value = 'spot:3';
   sel.dispatchEvent(new Event('change'));
   await new Promise((r) => setTimeout(r, 800));
   s.engine.render(true);
@@ -618,7 +618,7 @@ const spot = await page.evaluate(async () => {
     films: plates.files.filter((f) => !f.name.includes('proof')).length,
   };
 });
-check('Colour → Spot inks makes a colour group, one closest-colour layer and one film per ink',
+check('Inks & plates → New print → 3 colours makes a colour group, one closest-colour layer and one film per ink',
   spot.groups === 1 && spot.layers === 3 && spot.films === 3,
   `${spot.groups} group, ${spot.layers} colour layers, ${spot.films} films`);
 

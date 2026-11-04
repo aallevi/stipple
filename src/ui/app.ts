@@ -97,6 +97,11 @@ export class App {
       () => this.engine.sourceImage,
       (done) => this.pickColour(done),
       (layerId) => this.inks.make('spot', 3, layerId),
+      () => {
+        const sec = this.inks.el.querySelector('.section');
+        sec?.classList.remove('collapsed');
+        this.inks.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
     );
     this.inks = new InksPanel(this.store, this.interaction, {
       getSource: () => this.engine.sourceImage,

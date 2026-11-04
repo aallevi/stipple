@@ -87,11 +87,12 @@ export class InksPanel {
   }
 
   private build(a: { id: string; kind: PrintKind } | null, g: LayerGroup | undefined): void {
-    const body: Control[] = a ? this.groupControls(a.id, a.kind, g) : [
-      hint('No print yet. Make one from the selected layer: spot colours that sit side by side, '
-        + 'or plates whose inks print over each other and mix.'),
-    ];
-    body.push(this.makeMenu(!!a));
+    // Making a print is always the first thing here and always the same menu,
+    // whatever is selected; the line under it says what it will do this time.
+    const body: Control[] = [this.makeMenu(), readout(() => this.makeWillDo())];
+    if (a) body.push(group('The print in hand'), ...this.groupControls(a.id, a.kind, g));
+    else body.push(hint('No print selected. Spot colours sit side by side, each ink owning part of the '
+      + 'picture; overprinting plates print over each other and mix.'));
     body.push(raw(button('Export plates…', () => this.opts.exportPlates(), 'sm wide',
       'One black-on-white film per ink, plus a colour proof, with registration marks')));
 
@@ -107,9 +108,19 @@ export class InksPanel {
 
   // -- making a print ------------------------------------------------------
 
-  private makeMenu(inGroup: boolean): Control {
+  /** What "New print" will do with the current selection, in words. */
+  private makeWillDo(): string {
+    const sel = this.opts.selection();
+    const l = sel.layer ? this.store.layer(sel.layer) : undefined;
+    if (!l) return 'Adds a print group at the top of the stack.';
+    if (!l.groupId) return `Turns “${l.name}” into the print, every ink a copy of it.`;
+    const g = this.store.group(l.groupId);
+    return `Adds a new print group above “${g?.name ?? 'this group'}” — nothing is replaced.`;
+  }
+
+  private makeMenu(): Control {
     const sel = h('select', { class: 'make-print-select' }) as HTMLSelectElement;
-    sel.append(h('option', { value: '' }, inGroup ? 'Add another print group…' : 'Make from the selected layer…'));
+    sel.append(h('option', { value: '' }, 'New print…'));
     const spot = h('optgroup', { label: 'Spot colours, side by side — from the picture' });
     for (let n = 2; n <= 8; n++) spot.append(h('option', { value: `spot:${n}` }, `${n} colours`));
     const plates = h('optgroup', { label: 'Overprinting plates, inks that mix' });
@@ -287,6 +298,10 @@ export class InksPanel {
       paletteControl({
         label: 'Palette', interaction: ia,
         names: () => inks().map((l) => l.name),
+        current: () => {
+          const sel = this.opts.selection();
+          return sel.group ? -1 : inks().findIndex((l) => l.id === sel.layer);
+        },
         remove: (i) => {
           const l = inks()[i];
           if (l && inks().length > 1) s.removeLayer(l.id);

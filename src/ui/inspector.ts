@@ -63,6 +63,8 @@ export class Inspector {
     private pickColour: (done: (c: RGBA) => void) => void = () => {},
     /** Turn a layer into a group of spot colours — the Inks & plates panel does the making. */
     private makeSpot: (layerId: string) => void = () => {},
+    /** Bring the Inks & plates panel into view. */
+    private openInks: () => void = () => {},
   ) {}
 
   /** Rebuild if the layer identity or an option that changes the form did. */
@@ -307,7 +309,9 @@ export class Inspector {
         }),
       ]),
 
-      section('Colour', this.colorControls(id), false, [], 'The ink each dot prints with. Solid is one ink for the whole layer. Spot inks turns the layer into a group with one layer per ink: each draws only where the picture is closest to its colour, so the screens fit together without printing on top of each other, and each ink can have its own shape and size. Pick colours from the picture for details the automatic sampling misses.'),
+      // An ink of a print has no Colour section: its colour is its swatch in
+      // Inks & plates, so there is exactly one place to change it.
+      ...(this.isInk(layer) ? [] : [section('Colour', this.colorControls(id), false, [], 'The colour this layer\u2019s dots print in: one solid ink, a ramp from tone, colours sampled from the picture, or a random pick from a palette. To print in several inks \u2014 spot colours or overprinting plates \u2014 use Inks & plates at the top: each ink becomes a layer of its own.')]),
 
       section('Transform', [
         slider({
@@ -359,6 +363,13 @@ export class Inspector {
           get: () => L().opacity,
           set: (v) => s.editLayer(id, { opacity: v }),
         }),
+        // For an ink, the one colour setting that is the layer's own.
+        ...(this.isInk(layer) ? [slider({
+          label: 'Ink opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+          title: 'Per-dot alpha, on top of the layer opacity',
+          get: () => L().color.alpha,
+          set: (v) => s.editLayerField(id, 'color', { alpha: v }),
+        })] : []),
       ], false, [], 'How this layer lands on the layers below it. Multiply darkens like real ink over ink, which is what plates use. Opacity fades the whole layer.'),
     ];
 
@@ -572,7 +583,7 @@ export class Inspector {
           { value: 'adaptive', label: 'Ramp (hue from tone)' },
           { value: 'image', label: 'Sample the image' },
           { value: 'multicolor', label: 'Random from palette' },
-          { value: 'spot', label: 'Spot inks (one layer per ink, in a group)' },
+          ...(L().color.mode === 'spot' ? [{ value: 'spot' as const, label: 'Spot inks (older, one layer)' }] : []),
         ],
         get: () => (this.isColourGroupLayer(L()) ? 'spot' : L().color.mode),
         set: (v) => {
@@ -591,6 +602,9 @@ export class Inspector {
         },
       }),
     ];
+
+    controls.push(raw(button('Print in several inks\u2026', () => this.openInks(), 'sm wide',
+      'Spot colours or overprinting plates, one layer per ink \u2014 made in Inks & plates')));
 
     if (inColourGroup || this.isPlate(L())) {
       // One ink of a print: its own colour here, the set of inks in Inks & plates.
@@ -697,6 +711,11 @@ export class Inspector {
   /** A closest-colour layer in a group: one ink of a set of spot colours. */
   private isColourGroupLayer(l: Layer): boolean {
     return l.prefilter.channel === 'nearest' && !!l.groupId;
+  }
+
+  /** An ink of a print group — spot colour or plate — whose colour lives in Inks & plates. */
+  private isInk(l: Layer): boolean {
+    return this.isColourGroupLayer(l) || this.isPlate(l);
   }
 
   /** One plate of an overprinting set: measures one ink, prints solid in it, in a group. */

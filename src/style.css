@@ -732,6 +732,9 @@ input[type='range']::-moz-range-thumb {
   flex: 0 0 auto;
 }
 
+/* The swatch of the ink layer that is selected in Layers. */
+.swatch.ink.current { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* A swatch you can remove: the × sits on its corner, always visible, because a
    phone has no hover to reveal it. */
 .swatch-cell { position: relative; display: inline-flex; }

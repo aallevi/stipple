@@ -85,10 +85,13 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
 Everything about the print lives in **Inks & plates**, at the top of the sidebar. A print
 is a group of layers, one per ink.
 
-- **Make one.** *Make from the selected layer…* turns that layer into a group of
+- **Make one.** *New print…* is always at the top of the panel, with the same options:
   **spot colours** (2–8 inks found in the picture) or **overprinting plates** (CMYK, CMY,
-  RGB, risograph, earth, tritone, duotone). *Colour → Spot inks* does the first too. With
-  a print already in hand, the same menu adds a second group beside it instead.
+  RGB, risograph, earth, tritone, duotone). The line under it says what it will do: turn
+  the selected layer into the print, or — with a print already in hand — add a second
+  group beside it, replacing nothing.
+- **An ink's colour is its swatch.** Ink layers have no Colour section of their own; select
+  one and its swatch is marked in the palette. Its ink opacity is in Blend.
 - **Spot colours** sit side by side: each ink owns the part of the picture closest to its
   colour, so screens never overprint. **Overprinting plates** print over each other and
   mix, as process printing does. *Inks print* switches a group between the two and keeps

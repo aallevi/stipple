@@ -147,9 +147,9 @@ There are two ways to get from a photograph to a set of screens, and they make
 different-looking prints. The tool supports both, and the difference is worth
 understanding before you pick one.
 
-**Spot colours — a layer per ink, each where its colour is closest.** Set
-`Colour mode → Spot inks` and the layer becomes a group, one layer per ink, every one a
-copy of the original in shape, size and screen. For each pixel the app finds the ink it
+**Spot colours — a layer per ink, each where its colour is closest.** Inks & plates →
+*New print… → N colours* turns the selected layer into a group, one layer per ink, every
+one a copy of the original in shape, size and screen. For each pixel the app finds the ink it
 looks closest to (Oklab distance, so it is the colour that *looks* nearest, not the
 nearest numbers), and only that ink's layer draws there. The regions fit together like a
 puzzle: no two screens print the same spot, and every dot is a real ink.
@@ -174,9 +174,12 @@ layer — recolour it and that layer changes; change `Inks` and layers are added
 The readout under the swatches says what share of the paper each screen would cover —
 the number that decides whether an ink is worth the pull. Select one layer of the group
 to give that ink its own shape, size, density or pattern: bigger dots for the shadows,
-lines for one colour. Inks & plates → *Make from the selected layer… → N colours* builds the
-same group in one step, and with a print already in hand it adds a second group beside
-it rather than replacing anything.
+lines for one colour. With a print already in hand, *New print…* adds a second group beside it rather than
+replacing anything — spot colours and a set of plates can live in one document.
+
+An ink layer has no Colour section: its colour is its swatch in Inks & plates, marked
+when the layer is selected, and its ink opacity sits in Blend. Set Measure → Responds to
+→ Overall tone to make it an ordinary layer again.
 
 A single-layer spot-ink layer from an older project still prints as it did, and offers
 *Turn into a colour group*.

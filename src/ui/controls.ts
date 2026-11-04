@@ -305,6 +305,8 @@ export function paletteControl(opts: {
   remove?(index: number): void;
   /** A name per swatch, for its tooltip and its remove button. */
   names?(): string[];
+  /** Which swatch belongs to what is selected elsewhere, to mark it; -1 for none. */
+  current?(): number;
 }): Control {
   const row = h('div', { class: 'palette-row' });
   let inputs: HTMLInputElement[] = [];
@@ -349,7 +351,9 @@ export function paletteControl(opts: {
       const p = opts.get();
       if (inputs.length !== p.length) rebuild(p.length);
       const names = opts.names?.() ?? [];
+      const cur = opts.current?.() ?? -1;
       p.forEach((c, i) => {
+        inputs[i].classList.toggle('current', i === cur);
         inputs[i].value = rgbToHex(c[0], c[1], c[2]);
         if (names[i]) inputs[i].title = names[i];
         if (removers[i]) removers[i].title = `Remove ${names[i] ?? `ink ${i + 1}`}`;
