@@ -9,6 +9,9 @@ I've been using this to have some screen printing fun at home, and it's freely a
 to anyone who'd like the same. It isn't a product. It's a tool that has made a lot of
 prints I'm happy with, and I hope it does the same for you.
 
+**[Try it in your browser →](https://aallevi.github.io/stipple/)** No install needed.
+Everything runs on your machine, and your images never leave it.
+
 - **Layers.** Each layer has its own algorithm, shape, ink, tone mask and blend mode. A
   layer can also read *the render beneath it* instead of the photo.
 - **Three distributions.** Stochastic (jittered), weighted Voronoi (on the GPU, up to a
@@ -22,6 +25,8 @@ prints I'm happy with, and I hope it does the same for you.
 ---
 
 ## Install
+
+To run it locally, or to work on it:
 
 You need [Node.js](https://nodejs.org) 20 or newer and a browser with WebGL2 (any recent
 Chrome, Firefox, Safari or Edge).
@@ -43,7 +48,8 @@ terminal to stop it. That's the whole install; you don't need Rust or a desktop 
 | `npm run build` | Type-check and write a static site to `dist/` |
 
 `dist/` is plain static files with relative paths, so you can host it anywhere, from a
-folder on a web server to GitHub Pages.
+folder on a web server to GitHub Pages. The live copy above is redeployed from `master`
+on every push by `.github/workflows/pages.yml`.
 
 ### Optional: the desktop app
 
