@@ -87,6 +87,124 @@ export class Engine {
     this.stackDirty = true;
     this.needsRender = true;
   }
+
+  /**
+   * Work in progress, for the loading bar: layers built out of those that
+   * needed building, or null when nothing is being built.
+   */
+  progress: { done: number; total: number } | null = null;
+  private jobTotal = 0;
+  /** Set before a change known to be heavy, so the bar shows before the first layer, not after. */
+  private yieldFirst = false;
+
+  private spare: { a: RenderTarget; b: RenderTarget; layer: RenderTarget } | null = null;
+
+  /** Every visible layer under `index`, composited into spare targets at the composite's size. */
+  private composeBelow(project: Project, index: number): RenderTarget {
+    const { gl } = this;
+    const w = this.renderW;
+    const h = this.renderH;
+    if (!this.spare || this.spare.a.width !== w || this.spare.a.height !== h) {
+      this.spare?.a.dispose();
+      this.spare?.b.dispose();
+      this.spare?.layer.dispose();
+      this.spare = { a: new RenderTarget(gl, w, h), b: new RenderTarget(gl, w, h), layer: new RenderTarget(gl, w, h) };
+    }
+    const unit = unitPx(project.canvas);
+    const scale = w / project.canvas.width;
+    let base = this.spare.a;
+    let other = this.spare.b;
+    base.clear(0, 0, 0, 0);
+    for (const raw of project.layers.slice(0, index)) {
+      if (!raw.visible || raw.opacity <= 0) continue;
+      const cache = this.caches.get(raw.id);
+      if (!cache?.points) continue;
+      const layer = resolveLayer(raw, unit);
+      const slot = this.atlas.get(layer.shapeId) ?? this.atlas.get('circle');
+      if (!slot) continue;
+      this.spare.layer.clear(0, 0, 0, 0);
+      this.atlas.bind(0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.sourceTex);
+      this.renderer.draw({
+        batch: cache.batch,
+        layer,
+        slot,
+        view: makeView(project.canvas.width, project.canvas.height, w, h, { zoom: scale, panX: 0, panY: 0 }, layer.transform),
+        canvas: [project.canvas.width, project.canvas.height],
+        atlasUnit: 0,
+        imageUnit: 1,
+        sizeScale: scale,
+      });
+      other.bind();
+      this.compositor.composite(base.texture, this.spare.layer.texture, layer.blend, layer.opacity);
+      const t = base;
+      base = other;
+      other = t;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return base;
+  }
+
+  /** The next render should paint the loading bar before it starts building. */
+  expectHeavy(): void {
+    this.yieldFirst = true;
+  }
+
+  /**
+   * Build the density maps and points the next render needs, within a frame's
+   * budget, bottom layer first. Stops at the first layer that reads the layers
+   * below — that one needs the composite, which the render loop builds — and
+   * leaves it to the loop. Returns how many layers are still waiting.
+   */
+  private prepare(project: Project, quality: number): number {
+    const unit = unitPx(project.canvas);
+    const pending: { layer: Layer; cache: LayerCache; dKey: string; pKey: string; index: number }[] = [];
+    project.layers.forEach((raw, index) => {
+      if (!raw.visible || raw.opacity <= 0) return;
+      const layer = this.withCompetitors(resolveLayer(raw, unit), project);
+      const cache = this.cacheFor(layer.id);
+      const dKey = this.densityKeyFor(layer);
+      const pKey = this.pointsKeyFor(layer, project.canvas.width, project.canvas.height, quality);
+      const stale = cache.densityKey !== dKey || (layer.input === 'below' && !cache.density);
+      if (stale || cache.pointsKey !== pKey || !cache.points) pending.push({ layer, cache, dKey, pKey, index });
+    });
+    if (!pending.length) return 0;
+    if (!this.progress) {
+      this.jobTotal = pending.length;
+      this.progress = { done: 0, total: pending.length };
+      // Interactive drags are thinned and quick; only a deliberate, heavy change
+      // waits a frame so the bar is on screen before the work starts.
+      if (this.yieldFirst && !this.interactive) {
+        this.yieldFirst = false;
+        return pending.length;
+      }
+    }
+    this.yieldFirst = false;
+    const t0 = performance.now();
+    let left = pending.length;
+    for (const { layer, cache, dKey, pKey, index } of pending) {
+      if (cache.densityKey !== dKey || (layer.input === 'below' && !cache.density)) {
+        // A layer reading the layers below needs them drawn first. They are
+        // drawn into spare targets, so the drawing on screen stays whole until
+        // the new one is ready.
+        const src = layer.input === 'below' ? this.readbackAsSource(this.composeBelow(project, index)) : this.source!;
+        const pixelScale = src.width / project.canvas.width;
+        cache.density = DensityMap.fromSource(src, layer.prefilter, pixelScale);
+        cache.densityKey = dKey;
+        cache.pointsKey = '';
+      }
+      if (cache.pointsKey !== pKey || !cache.points) {
+        cache.points = this.generate(layer, cache.density!, project, quality, unit);
+        cache.batch.upload(cache.points.data, cache.points.count);
+        cache.pointsKey = pKey;
+      }
+      left -= 1;
+      this.progress = { done: Math.max(0, this.jobTotal - left), total: this.jobTotal };
+      if (left > 0 && performance.now() - t0 > 30) return left;
+    }
+    return 0;
+  }
   private lastQuality = 1;
 
   stats: Stats = { points: 0, layers: 0, generateMs: 0, renderMs: 0, regenerated: 0 };
@@ -314,6 +432,19 @@ export class Engine {
     // detail pass, so the composite only has to be *right* for the layers that
     // read it back (`below`). If none do, the draws into it are skipped and it
     // is rebuilt the next time it is actually shown.
+    // Build what is missing a layer at a time, a frame at a time, so a heavy
+    // change shows a moving bar over the last drawing instead of freezing the
+    // window. Forced renders (export, tests) still do everything at once.
+    if (!force) {
+      const left = this.prepare(project, quality);
+      if (left > 0) {
+        this.presentToScreen(project);
+        return; // needsRender stays set: the next frame continues
+      }
+    }
+    this.progress = null;
+    this.jobTotal = 0;
+
     const magnifying = this.magnifying(project);
     const needsBase = !magnifying || project.layers.some((l) => l.visible && l.input === 'below');
     if (!this.stackDirty && !force && !(this.baseStale && !magnifying)) {
@@ -742,7 +873,7 @@ export class Engine {
    */
   prepareForExport(): void {
     this.setInteractive(false);
-    this.render();
+    this.render(true);
   }
 
   /**
@@ -800,6 +931,9 @@ export class Engine {
     this.detail?.accum.dispose();
     this.detail?.scratch.dispose();
     this.detail?.layer.dispose();
+    this.spare?.a.dispose();
+    this.spare?.b.dispose();
+    this.spare?.layer.dispose();
     this.atlas.dispose();
     this.renderer.dispose();
     this.compositor.dispose();

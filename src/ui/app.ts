@@ -17,6 +17,7 @@ import { Inspector } from './inspector';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
 import { PRESETS } from './presets';
+import markSvg from '../../assets/brand/mark.svg?raw';
 import { formatLength } from './units';
 
 /**
@@ -37,6 +38,10 @@ export class App {
   private inspector: Inspector;
   private hud = h('div', { class: 'hud' });
   private toast = h('div', { class: 'toast' });
+  /** A thin bar while layers are being built, in place of a frozen window. */
+  private progressFill = h('div', { class: 'progress-fill' });
+  private progressLabel = h('span', { class: 'progress-label' });
+  private progressBar = h('div', { class: 'progress', hidden: '' }, this.progressFill, this.progressLabel);
   /**
    * What the canvas shows before there is a picture: a place to drop one. The
    * app used to start on a synthetic test card so there was "always something
@@ -109,6 +114,7 @@ export class App {
       selection: () => ({ layer: this.layers.selected, group: this.layers.selectedGroup }),
       selectGroup: (gid) => this.layers.selectGroup(gid),
       exportPlates: () => void this.doExportPlates(),
+      expectHeavy: () => this.engine.expectHeavy(),
       notify: (m, e) => this.notify(m, e),
     });
 
@@ -190,6 +196,7 @@ export class App {
     presetSel.append(h('option', { value: '' }, 'Presets…'));
     for (const p of PRESETS) presetSel.append(h('option', { value: p.name }, p.name));
     presetSel.addEventListener('change', () => {
+      this.engine.expectHeavy();
       const preset = PRESETS.find((p) => p.name === presetSel.value);
       if (!preset) return;
       const project = this.store.get();
@@ -210,7 +217,7 @@ export class App {
     // sends work back out grouped together on the far right.
     return h('div', { class: 'app' },
       h('header', { class: 'toolbar' },
-        h('span', { class: 'brand' }, h('span', { class: 'brand-mark' }), 'Stipple'),
+        h('span', { class: 'brand' }, brandMark(), 'Stipple'),
         h('div', { class: 'tool-group' },
           button('Open image…', () => void this.openImage(), 'primary', 'Open an image to stipple (⌘O)'),
         ),
@@ -317,6 +324,7 @@ export class App {
     const apply = button('Apply', () => {
       const w = Math.round(pending.width);
       const ht = Math.round(pending.height);
+      this.engine.expectHeavy();
       this.store.updateCanvas({ width: w, height: ht, dpi: Math.round(pending.dpi) });
       this.fitToWindow();
       this.notify(`Document set to ${w} × ${ht} px at ${Math.round(pending.dpi)} dpi`);
@@ -717,7 +725,20 @@ export class App {
   private splitHandle = h('div', { class: 'split-handle', hidden: '' }, h('span', { class: 'split-grip' }));
   private compare = this.buildCompare();
   private stage = h('div', { class: 'stage' },
-    this.canvas, this.splitHandle, this.dropZone, this.hud, this.toast);
+    this.canvas, this.splitHandle, this.dropZone, this.progressBar, this.hud, this.toast);
+
+  private progressKey = '';
+  private updateProgress(): void {
+    const p = this.engine.progress;
+    const key = p ? `${p.done}/${p.total}` : '';
+    if (key === this.progressKey) return;
+    this.progressKey = key;
+    this.progressBar.hidden = !p;
+    if (!p) return;
+    // At least a sliver, so the bar is visibly there from the first frame.
+    this.progressFill.style.width = `${Math.max(4, (p.done / Math.max(1, p.total)) * 100)}%`;
+    this.progressLabel.textContent = p.total > 1 ? `Drawing layer ${Math.min(p.done + 1, p.total)} of ${p.total}\u2026` : 'Drawing\u2026';
+  }
 
   /**
    * On an upright phone the toolbar is one row that scrolls sideways, which
@@ -855,6 +876,7 @@ export class App {
       const src = /\.tiff?$/i.test(picked.name) && picked.path
         ? toSource(await decodeNative(picked.path))
         : await decodeImage(picked.bytes);
+      this.engine.expectHeavy();
       this.engine.setSource(src);
       this.dropZone.hidden = true;
       // Take the image's *shape*, not its pixel count.
@@ -1004,6 +1026,7 @@ export class App {
       const ids = new Set(project.shapes.map((s) => s.id));
       project.shapes = [...BUILTIN_SHAPES.filter((s) => !ids.has(s.id)), ...project.shapes];
 
+      this.engine.expectHeavy();
       this.store.load(project);
       // Raster shapes carry their pixels as data URLs; decode them before the
       // atlas tries to build distance fields.
@@ -1050,6 +1073,7 @@ export class App {
       if (this.frameTimes.length > 30) this.frameTimes.shift();
     }
     this.updateHUD();
+    this.updateProgress();
     this.placeSplit();
     requestAnimationFrame(this.loop);
   };
@@ -1104,4 +1128,11 @@ function blankSource(): ImageSource {
   const width = 16;
   const height = 16;
   return { width, height, rgba: new Uint8ClampedArray(width * height * 4).fill(255) };
+}
+
+/** The app's mark — the icon's sphere, as a halftone that still reads at toolbar size. */
+function brandMark(): HTMLElement {
+  const el = h('span', { class: 'brand-mark', 'aria-hidden': 'true' });
+  el.innerHTML = markSvg;
+  return el;
 }

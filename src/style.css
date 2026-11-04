@@ -85,13 +85,8 @@ body {
   margin-right: 4px;
   color: var(--text);
 }
-.brand-mark {
-  width: 12px;
-  height: 12px;
-  background:
-    radial-gradient(circle, var(--text) 1px, transparent 1.2px) 0 0 / 4px 4px,
-    var(--accent);
-}
+.brand-mark { display: inline-flex; width: 18px; height: 18px; }
+.brand-mark svg { width: 100%; height: 100%; display: block; }
 
 .spacer { flex: 1; }
 
@@ -262,6 +257,22 @@ select:hover { background: var(--hover); }
 }
 .split-grip::before { left: 4px; }
 .split-grip::after { right: 4px; }
+
+/* Building layers: a thin bar along the top of the canvas and a quiet label,
+   over the previous drawing, which stays on screen until the new one is ready. */
+.progress { position: absolute; left: 0; right: 0; top: 0; z-index: 3; height: 3px; background: rgba(0, 0, 0, 0.18); pointer-events: none; }
+.progress[hidden] { display: none; }
+.progress-fill { height: 100%; background: var(--accent); transition: width 0.12s linear; }
+.progress-label {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  padding: 2px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
 
 /* The empty stage: a place to put a picture, and nothing else. */
 .drop-zone {

@@ -53,6 +53,7 @@ export class InksPanel {
       selection(): { layer: string | null; group: string | null };
       selectGroup(id: string): void;
       exportPlates(): void;
+      expectHeavy(): void;
       notify(message: string, isError?: boolean): void;
     },
   ) {}
@@ -177,6 +178,7 @@ export class InksPanel {
       layers = buildSeparation(set, project.canvas).map((l) => ({ ...l, groupId: group.id }));
     }
 
+    this.opts.expectHeavy();
     if (src && !src.groupId) {
       s.replaceLayerWithGroup(src.id, layers, group);
     } else {
