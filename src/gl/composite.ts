@@ -78,6 +78,9 @@ const PRESENT_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
 uniform sampler2D uSource;
+// Where the picture sits inside uTex: the whole of it for the canvas-space
+// composite, a sub-rectangle for the screen-sized detail pass.
+uniform vec4 uTexRect;
 uniform vec4 uBackground;
 // Preview-only comparison, all of it here in the screen pass and nowhere on the
 // export path: 0 = the drawing, 1 = the original photo, 2 = split at uSplit.
@@ -92,7 +95,7 @@ void main() {
   // destination rectangle has to drop out; leaving it to CLAMP_TO_EDGE would
   // smear the border pixels across the rest of the view.
   if (any(lessThan(vUV, vec2(0.0))) || any(greaterThan(vUV, vec2(1.0)))) discard;
-  vec4 c = texture(uTex, vUV);
+  vec4 c = texture(uTex, uTexRect.xy + vUV * uTexRect.zw);
   // The source is uploaded top row first, the stack is rendered bottom-up.
   vec3 photo = texture(uSource, vec2(vUV.x, 1.0 - vUV.y)).rgb;
   vec3 bg = uBackground.rgb * uBackground.a;
@@ -170,6 +173,7 @@ export class Compositor {
      * the export path leaves it out and always gets the plain drawing.
      */
     preview?: { source: WebGLTexture | null; view: PreviewView; linePx: number; widthPx: number },
+    texRect: [number, number, number, number] = [0, 0, 1, 1],
   ): void {
     const { gl } = this;
     const u = this.presentProg.uniforms;
@@ -187,6 +191,7 @@ export class Compositor {
     gl.uniform1f(u.uUnder!, view.under);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform4f(u.uRect!, rect[0], rect[1], rect[2], rect[3]);
+    gl.uniform4f(u.uTexRect!, texRect[0], texRect[1], texRect[2], texRect[3]);
     gl.uniform4f(u.uBackground!, background[0], background[1], background[2], background[3]);
     gl.disable(gl.BLEND);
     gl.bindVertexArray(this.quad);

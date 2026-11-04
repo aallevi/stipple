@@ -32,6 +32,12 @@ uniform vec4 uAtlasUV;     // xy = tile origin, zw = tile extent
 
 uniform float uSizeMin;
 uniform float uSizeMax;
+// Target pixels per canvas pixel. Sizes arrive in target pixels — that is the
+// unit the one-pixel floor below has to be in — but the quad is built in canvas
+// space and uView scales it again, so it is divided back out there. Without
+// that, every mark was this factor squared too large whenever the target was
+// not 1:1 with the canvas: fatter dots in the zoomed preview than in the file.
+uniform float uPxPerCanvas;
 uniform float uSizeFromTone;
 uniform float uSizeGamma;
 uniform bool  uSizeInvert;
@@ -172,7 +178,7 @@ void main() {
 
   float c = cos(rot);
   float s = sin(rot);
-  vec2 local = vec2(aCorner.x * c - aCorner.y * s, aCorner.x * s + aCorner.y * c) * drawSize;
+  vec2 local = vec2(aCorner.x * c - aCorner.y * s, aCorner.x * s + aCorner.y * c) * (drawSize / uPxPerCanvas);
   vec3 clip = uView * vec3(aPos + local, 1.0);
   gl_Position = vec4(clip.xy, 0.0, 1.0);
 
@@ -344,6 +350,7 @@ export class PointRenderer {
     const s = layer.size;
     gl.uniform1f(u.uSizeMin!, s.min * opts.sizeScale);
     gl.uniform1f(u.uSizeMax!, s.max * opts.sizeScale);
+    gl.uniform1f(u.uPxPerCanvas!, Math.max(1e-6, opts.sizeScale));
     gl.uniform1f(u.uSizeFromTone!, s.fromTone);
     gl.uniform1f(u.uSizeGamma!, s.gamma ?? 1);
     gl.uniform1i(u.uSizeInvert!, s.invert ? 1 : 0);

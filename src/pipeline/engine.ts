@@ -73,6 +73,20 @@ export class Engine {
   private viewport: Viewport = { zoom: 1, panX: 0, panY: 0 };
   private interactive = false;
   private needsRender = true;
+  /**
+   * The canvas-space composite is out of date. Separate from `needsRender`
+   * because most redraws are a pan or a zoom, which change only how the
+   * composite is shown — and recomposing every layer for those was the bulk of
+   * what the preview cost.
+   */
+  private stackDirty = true;
+  /** The composite was skipped while zoomed in (see `render`) and must be rebuilt before it is shown. */
+  private baseStale = false;
+
+  private markStack(): void {
+    this.stackDirty = true;
+    this.needsRender = true;
+  }
   private lastQuality = 1;
 
   stats: Stats = { points: 0, layers: 0, generateMs: 0, renderMs: 0, regenerated: 0 };
@@ -126,8 +140,9 @@ export class Engine {
 
   setViewport(v: Partial<Viewport>): void {
     this.viewport = { ...this.viewport, ...v };
-    // Panning only moves the presented quad, but zoom changes the internal
-    // render scale, so both go through the same redraw.
+    // A view change never recomposes the drawing: zoomed out, the cached
+    // composite is just presented at a new size; zoomed in, the detail pass
+    // redraws the visible part from the cached points.
     this.needsRender = true;
   }
 
@@ -160,7 +175,7 @@ export class Engine {
     this.interactive = on;
     if (!on && this.lastQuality < 1) {
       for (const c of this.caches.values()) c.pointsKey = '';
-      this.needsRender = true;
+      this.markStack();
     }
   }
 
@@ -213,7 +228,7 @@ export class Engine {
       }
     }
 
-    this.needsRender = true;
+    this.markStack();
   }
 
   private cacheFor(id: string): LayerCache {
@@ -292,8 +307,22 @@ export class Engine {
     const quality = this.interactive ? INTERACTIVE_QUALITY : 1;
     this.lastQuality = quality;
 
-    this.ensureTargets(project);
+    if (this.ensureTargets(project)) this.stackDirty = true;
     const { gl } = this;
+
+    // Zoomed in past the composite's own resolution, the screen is drawn by the
+    // detail pass, so the composite only has to be *right* for the layers that
+    // read it back (`below`). If none do, the draws into it are skipped and it
+    // is rebuilt the next time it is actually shown.
+    const magnifying = this.magnifying(project);
+    const needsBase = !magnifying || project.layers.some((l) => l.visible && l.input === 'below');
+    if (!this.stackDirty && !force && !(this.baseStale && !magnifying)) {
+      this.presentToScreen(project);
+      this.needsRender = false;
+      return;
+    }
+    this.stackDirty = false;
+    this.baseStale = !needsBase;
 
     this.accum!.clear(0, 0, 0, 0);
     let base = this.accum!;
@@ -344,6 +373,7 @@ export class Engine {
 
       const slot = this.atlas.get(layer.shapeId) ?? this.atlas.get('circle');
       if (!slot) continue;
+      if (!needsBase) continue;
 
       const scale = this.renderW / project.canvas.width;
       this.layerTarget!.clear(0, 0, 0, 0);
@@ -425,22 +455,27 @@ export class Engine {
     }
   }
 
-  private ensureTargets(project: Project): void {
+  /**
+   * The canvas-space composite, at the document's own resolution.
+   *
+   * Below 1:1 the sub-pixel clamp in the point shader turns every mark into a
+   * one-pixel dab, so a zoomed-out preview drawn at screen size showed an even
+   * haze rather than the image the export contains; drawing the picture full
+   * size and letting the mip chain average it down is what shows it truly.
+   * Above 1:1 this target is not what you see — the detail pass is — so its
+   * size no longer follows the zoom at all, and zooming never rebuilds it or
+   * invalidates the `below` readbacks taken from it.
+   *
+   * Returns true when the targets were (re)created.
+   */
+  private ensureTargets(project: Project): boolean {
     const { gl } = this;
-    // Always render at *at least* the output resolution, whatever the zoom.
-    // Below 1:1 the sub-pixel clamp in the point shader turns every mark into a
-    // one-pixel dab, so a zoomed-out preview showed an even haze rather than the
-    // image the export actually contains; the way to see the whole picture is to
-    // render it full size and let the mip chain average it down. Zooming past
-    // 1:1 supersamples instead, bounded so memory stays predictable.
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const ss = this.viewport.zoom * dpr > 1.05 ? 2 : 1;
-    const edge = Math.max(project.canvas.width, project.canvas.height) * ss;
+    const edge = Math.max(project.canvas.width, project.canvas.height);
     const clamp = edge > MAX_RENDER_EDGE ? MAX_RENDER_EDGE / edge : 1;
-    const w = Math.max(1, Math.round(project.canvas.width * ss * clamp));
-    const h = Math.max(1, Math.round(project.canvas.height * ss * clamp));
+    const w = Math.max(1, Math.round(project.canvas.width * clamp));
+    const h = Math.max(1, Math.round(project.canvas.height * clamp));
 
-    if (this.renderW === w && this.renderH === h && this.accum) return;
+    if (this.renderW === w && this.renderH === h && this.accum) return false;
     this.accum?.dispose();
     this.scratch?.dispose();
     this.layerTarget?.dispose();
@@ -455,6 +490,78 @@ export class Engine {
     this.renderH = h;
     // The point buffers are canvas-space, so they survive a scale change; only
     // the targets are rebuilt.
+    return true;
+  }
+
+  /** Device pixels per canvas pixel on screen, and whether that is past the composite's own. */
+  private screenScale(project: Project): number {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    return this.viewport.zoom * dpr * (project.canvas.width / Math.max(1, this.renderW || project.canvas.width));
+  }
+
+  private magnifying(project: Project): boolean {
+    return this.screenScale(project) > 1.001;
+  }
+
+  // -- detail pass ----------------------------------------------------------
+
+  private detail: { accum: RenderTarget; scratch: RenderTarget; layer: RenderTarget } | null = null;
+
+  /**
+   * Draw the visible part of the stack straight at screen resolution.
+   *
+   * Zoomed in, a composite stretched to fit the screen is a magnified bitmap,
+   * and its marks go soft — the preview used to be crisp up to 2x and blurry
+   * past it. The marks are vectors (signed-distance shapes, see
+   * `shape/atlas.ts`), so the honest way to show them large is to draw them
+   * large: the same cached points, the same shader, a view matrix for the
+   * screen instead of the canvas. Nothing is regenerated, so this is as cheap
+   * as a pan should be, and it is sharp at any zoom.
+   */
+  private drawDetail(project: Project, w: number, h: number, x: number, y: number, k: number): WebGLTexture {
+    const { gl } = this;
+    if (!this.detail || this.detail.accum.width !== w || this.detail.accum.height !== h) {
+      this.detail?.accum.dispose();
+      this.detail?.scratch.dispose();
+      this.detail?.layer.dispose();
+      this.detail = {
+        accum: new RenderTarget(gl, w, h),
+        scratch: new RenderTarget(gl, w, h),
+        layer: new RenderTarget(gl, w, h),
+      };
+    }
+    const unit = unitPx(project.canvas);
+    let base = this.detail.accum;
+    let other = this.detail.scratch;
+    base.clear(0, 0, 0, 0);
+    for (const raw of project.layers) {
+      if (!raw.visible || raw.opacity <= 0) continue;
+      const cache = this.caches.get(raw.id);
+      if (!cache?.points) continue;
+      const layer = resolveLayer(raw, unit);
+      const slot = this.atlas.get(layer.shapeId) ?? this.atlas.get('circle');
+      if (!slot) continue;
+      this.detail.layer.clear(0, 0, 0, 0);
+      this.atlas.bind(0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.sourceTex);
+      this.renderer.draw({
+        batch: cache.batch,
+        layer,
+        slot,
+        view: makeView(project.canvas.width, project.canvas.height, w, h, { zoom: k, panX: x, panY: y }, layer.transform),
+        canvas: [project.canvas.width, project.canvas.height],
+        atlasUnit: 0,
+        imageUnit: 1,
+        sizeScale: k,
+      });
+      other.bind();
+      this.compositor.composite(base.texture, this.detail.layer.texture, layer.blend, layer.opacity);
+      const t = base;
+      base = other;
+      other = t;
+    }
+    return base.texture;
   }
 
   /** Pull a render target back to CPU so a `below` layer can sample it. */
@@ -502,19 +609,32 @@ export class Engine {
     const dx = panX * dpr + (w - dw) / 2;
     const dy = panY * dpr + (h - dh) / 2;
 
-    // Displayed below 1:1 the marks have to be averaged down rather than
-    // point-sampled, or the preview reads as grain instead of as the image.
-    this.finalTarget?.setDisplayScale(dw / this.renderW);
-
     // The placement is carried by the quad, not by `gl.viewport`: a zoomed-in
     // canvas asks for a viewport far wider than the driver's maximum, and a
     // clamped viewport puts the image at the wrong size in the wrong place.
-    this.compositor.present(this.finalTexture!, project.canvas.background, [
+    const rect: [number, number, number, number] = [
       (2 * dx) / w - 1,
       (2 * (h - dy - dh)) / h - 1,
       (2 * dw) / w,
       (2 * dh) / h,
-    ], { source: this.sourceTex, view: this.preview, linePx: 1.5 * dpr, widthPx: dw });
+    ];
+    const preview = { source: this.sourceTex, view: this.preview, linePx: 1.5 * dpr, widthPx: dw };
+
+    if (dw > this.renderW * 1.001) {
+      // Past the composite's resolution: draw what is on screen, at screen
+      // resolution, and show it pixel for pixel.
+      const tex = this.drawDetail(project, w, h, dx, dy, zoom * dpr);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      this.compositor.present(tex, project.canvas.background, rect, preview,
+        [dx / w, (h - dy - dh) / h, dw / w, dh / h]);
+      return;
+    }
+
+    // Displayed at or below 1:1 the marks have to be averaged down rather than
+    // point-sampled, or the preview reads as grain instead of as the image.
+    this.finalTarget?.setDisplayScale(dw / this.renderW);
+    this.compositor.present(this.finalTexture!, project.canvas.background, rect, preview);
 
     // Compositing and the `below` readback sample these targets 1:1, so leave
     // the filter where those passes expect it.
@@ -677,6 +797,9 @@ export class Engine {
     this.accum?.dispose();
     this.scratch?.dispose();
     this.layerTarget?.dispose();
+    this.detail?.accum.dispose();
+    this.detail?.scratch.dispose();
+    this.detail?.layer.dispose();
     this.atlas.dispose();
     this.renderer.dispose();
     this.compositor.dispose();
