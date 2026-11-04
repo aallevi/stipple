@@ -1,4 +1,4 @@
-import { buildInkSet, extractPalette, inkShares, toneRamp } from '../core/color';
+import { buildInkSet, extractPalette, inkShares, oklab, toneRamp } from '../core/color';
 import { defaultLayer, uid } from '../core/defaults';
 import { groupMembers, groupSpan } from '../core/groups';
 import type { Store } from '../core/store';
@@ -78,7 +78,8 @@ export class InksPanel {
   update(): void {
     const a = this.active();
     const g = a ? this.store.group(a.id) : undefined;
-    const key = a ? `${a.id}:${a.kind}` : 'none';
+    const ranges = a ? !!this.inks(a.id)[0]?.prefilter.nearestRanges : false;
+    const key = a ? `${a.id}:${a.kind}:${ranges ? 'ranges' : ''}` : 'none';
     if (key !== this.builtFor) {
       this.collapsed = (this.el.firstElementChild as HTMLElement | null)?.classList.contains('collapsed') ?? false;
       this.build(a, g);
@@ -222,6 +223,7 @@ export class InksPanel {
         list.forEach((l, i) => recolour(l, colours[i]));
         for (let i = list.length; i < colours.length; i++) this.addInk(gid, colours[i], false);
         if (Object.keys(extra).length) for (const l of inks()) s.updateLayerField(l.id, 'prefilter', extra);
+        if (first()?.prefilter.nearestRanges) this.resetBands(gid);
       });
     };
 
@@ -250,8 +252,25 @@ export class InksPanel {
       const f = first();
       const leave = !!f?.prefilter.nearestPaper;
       const byTone = !!f?.prefilter.nearestByTone;
-      const key = `${JSON.stringify(list)}|${leave}|${byTone}|${JSON.stringify(paper())}`;
+      const ranges = !!f?.prefilter.nearestRanges;
+      const bands = inks().map((l) => l.prefilter.nearestBand ?? [0, 0]);
+      const key = `${JSON.stringify(list)}|${leave}|${byTone}|${ranges}|${JSON.stringify(bands)}|${JSON.stringify(paper())}`;
       if (key === sharesKey) return sharesText;
+      if (ranges) {
+        const hist = lightnessHistogram(pic);
+        const total = hist.reduce((a, b) => a + b, 0) || 1;
+        const share = (lo: number, hi: number): number => {
+          let n = 0;
+          hist.forEach((c, i) => { const L = (i + 0.5) / hist.length; if (L >= lo && L < hi) n += c; });
+          return n / total;
+        };
+        const parts = inks().map((l) => `${inkName(l.prefilter.ink ?? l.color.color)} ${Math.round(share(...(l.prefilter.nearestBand ?? [0, 0])) * 100)}%`);
+        const top = Math.max(0, ...bands.map((b) => b[1]));
+        if (top < 1) parts.push(`paper ${Math.round(share(top, 1.01) * 100)}%`);
+        sharesKey = key;
+        sharesText = parts.join(' \u00b7 ');
+        return sharesText;
+      }
       const split = inkShares(pic, buildInkSet(list, leave ? paper() : null), 0, byTone);
       sharesKey = key;
       sharesText = split.map((v, i) => `${i < list.length ? inkName(list[i]) : 'paper'} ${Math.round(v * 100)}%`).join(' · ');
@@ -306,7 +325,11 @@ export class InksPanel {
         },
         remove: (i) => {
           const l = inks()[i];
-          if (l && inks().length > 1) s.removeLayer(l.id);
+          if (!l || inks().length <= 1) return;
+          s.batch(`remove-ink:${l.id}`, () => {
+            s.removeLayer(l.id);
+            if (first()?.prefilter.nearestRanges) this.resetBands(gid);
+          });
         },
         get: () => inks().map((l) => (l.prefilter.ink ?? l.color.color) as [number, number, number, number]),
         set: (v) => {
@@ -339,16 +362,22 @@ export class InksPanel {
     if (kind === 'spot') {
       controls.push(
         group('How the inks share the picture'),
-        select<'colour' | 'tone'>({
-          label: 'Match on',
-          title: 'Whether a pixel goes to the ink closest in colour, or closest in lightness alone',
+        select<'colour' | 'tone' | 'ranges'>({
+          label: 'Divide by',
+          title: 'How the picture is shared out: each pixel to the ink closest in colour, closest in lightness, '
+            + 'or by tone ranges you set on the histogram',
           options: [
-            { value: 'colour', label: 'Colour' },
-            { value: 'tone', label: 'Lightness only' },
+            { value: 'colour', label: 'Closest colour' },
+            { value: 'tone', label: 'Closest lightness' },
+            { value: 'ranges', label: 'Tone ranges (histogram)' },
           ],
-          get: () => (first()?.prefilter.nearestByTone ? 'tone' : 'colour'),
-          set: (v) => setAll({ nearestByTone: v === 'tone' }, 'match-on'),
+          get: () => (first()?.prefilter.nearestRanges ? 'ranges' : first()?.prefilter.nearestByTone ? 'tone' : 'colour'),
+          set: (v) => s.batch('divide-by', () => {
+            for (const l of inks()) s.updateLayerField(l.id, 'prefilter', { nearestRanges: v === 'ranges', nearestByTone: v === 'tone' });
+            if (v === 'ranges') this.resetBands(gid);
+          }),
         }),
+        ...(first()?.prefilter.nearestRanges ? [this.toneRanges(gid)] : []),
         slider({
           label: 'Soft borders', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0.15,
           title: '0 is a hard edge between inks; higher dithers the pixels near a border between their two closest inks',
@@ -369,7 +398,10 @@ export class InksPanel {
           label: 'Leave paper',
           title: 'The paper competes as an ink, and where it is closest nothing prints — highlights stay bare stock',
           get: () => !!first()?.prefilter.nearestPaper,
-          set: (v) => setAll({ nearestPaper: v }, 'leave-paper'),
+          set: (v) => s.batch('leave-paper', () => {
+            for (const l of inks()) s.updateLayerField(l.id, 'prefilter', { nearestPaper: v });
+            if (first()?.prefilter.nearestRanges) this.resetBands(gid);
+          }),
         }),
       );
     } else {
@@ -409,7 +441,132 @@ export class InksPanel {
     }
     if ('seed' in d) d.seed = Math.floor(Math.random() * 9000) + 1;
     const span = groupSpan(project, gid);
-    s.addLayer(copy, span ? span[1] + 1 : project.layers.length);
+    s.batch(`add-ink:${copy.id}`, () => {
+      s.addLayer(copy, span ? span[1] + 1 : project.layers.length);
+      if (copy.prefilter.nearestRanges) this.resetBands(gid);
+    });
+  }
+
+  /**
+   * Lay the tone ranges out from the inks themselves: darkest ink at the
+   * bottom, each boundary halfway between two inks' lightness — which is
+   * exactly what "closest lightness" would do — and, with paper left, a last
+   * boundary halfway to the paper. A starting point for dragging, not a rule.
+   */
+  resetBands(gid: string): void {
+    const s = this.store;
+    const list = this.inks(gid).map((l) => ({ l, L: oklab(...rgb(l.prefilter.ink ?? l.color.color))[0] }))
+      .sort((a, b) => a.L - b.L);
+    if (!list.length) return;
+    const paperL = oklab(...rgb(s.get().canvas.background))[0];
+    const leave = !!list[0].l.prefilter.nearestPaper;
+    s.batch(`bands:${gid}`, () => list.forEach((e, i) => {
+      const lo = i === 0 ? 0 : (list[i - 1].L + e.L) / 2;
+      const hi = i === list.length - 1 ? (leave ? Math.min(0.995, (e.L + paperL) / 2) : 1) : (e.L + list[i + 1].L) / 2;
+      s.updateLayerField(e.l.id, 'prefilter', { nearestBand: [lo, hi] });
+    }));
+  }
+
+  /**
+   * The picture's lightness as a histogram, with each ink's range under it in
+   * its own colour and a handle on every boundary. Dragging a handle moves
+   * where one ink stops and the next begins — the paper too, when it is left.
+   */
+  private toneRanges(gid: string): Control {
+    const s = this.store;
+    const canvas = h('canvas', { class: 'histo-canvas', height: '88' }) as HTMLCanvasElement;
+    const el = h('div', { class: 'histo' }, canvas);
+    const inksByBand = (): Layer[] => this.inks(gid).filter((l) => l.prefilter.nearestBand)
+      .sort((a, b) => a.prefilter.nearestBand![0] - b.prefilter.nearestBand![0]);
+    /** Boundaries left to right: between each pair of inks, then ink-to-paper if there is paper. */
+    const boundaries = (): number[] => {
+      const list = inksByBand();
+      const out = list.slice(0, -1).map((l) => l.prefilter.nearestBand![1]);
+      const top = list[list.length - 1]?.prefilter.nearestBand![1] ?? 1;
+      if (top < 1) out.push(top);
+      return out;
+    };
+
+    const draw = (): void => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const W = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const H = Math.round(88 * dpr);
+      if (canvas.width !== W) canvas.width = W;
+      canvas.height = H;
+      const g = canvas.getContext('2d')!;
+      g.clearRect(0, 0, W, H);
+      const strip = 14 * dpr;
+      const plot = H - strip - 2 * dpr;
+      // Ink ranges, as a strip in each ink's colour; the paper's range left bare.
+      g.fillStyle = '#f4f4f0';
+      g.fillRect(0, plot + 2 * dpr, W, strip);
+      for (const l of inksByBand()) {
+        const [lo, hi] = l.prefilter.nearestBand!;
+        const c = l.prefilter.ink ?? l.color.color;
+        g.fillStyle = `rgb(${c[0] * 255},${c[1] * 255},${c[2] * 255})`;
+        g.fillRect(lo * W, plot + 2 * dpr, (hi - lo) * W, strip);
+      }
+      // The picture's lightness, on a square-root scale so a small detail's
+      // tones still show beside the large areas'.
+      const pic = this.opts.getSource();
+      if (pic) {
+        const hist = lightnessHistogram(pic);
+        const max = Math.sqrt(Math.max(...hist, 1));
+        const bw = W / hist.length;
+        g.fillStyle = '#3a3a3a';
+        hist.forEach((c, i) => {
+          const bh = (Math.sqrt(c) / max) * (plot - 2 * dpr);
+          g.fillRect(i * bw, plot - bh, Math.max(1, bw - dpr), bh);
+        });
+      }
+      // Handles.
+      for (const b of boundaries()) {
+        const x = Math.round(b * W);
+        g.fillStyle = '#111';
+        g.fillRect(x - dpr, 0, 2 * dpr, H);
+        g.fillStyle = '#ff9b21';
+        g.fillRect(x - 4 * dpr, plot + 2 * dpr, 8 * dpr, strip);
+        g.strokeStyle = '#111';
+        g.lineWidth = dpr;
+        g.strokeRect(x - 4 * dpr, plot + 2 * dpr, 8 * dpr, strip);
+      }
+    };
+
+    canvas.addEventListener('pointerdown', (e) => {
+      const box = canvas.getBoundingClientRect();
+      const at = (ev: PointerEvent): number => Math.min(1, Math.max(0, (ev.clientX - box.left) / box.width));
+      const bs = boundaries();
+      if (!bs.length) return;
+      const v0 = at(e);
+      let k = 0;
+      bs.forEach((b, i) => { if (Math.abs(b - v0) < Math.abs(bs[k] - v0)) k = i; });
+      if (Math.abs(bs[k] - v0) * box.width > 18) return;
+      e.preventDefault();
+      canvas.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent): void => {
+        const list = inksByBand();
+        const lower = list[k];
+        const upper = list[k + 1]; // undefined: the ink-to-paper boundary
+        if (!lower) return;
+        const min = lower.prefilter.nearestBand![0] + 0.01;
+        const max = upper ? upper.prefilter.nearestBand![1] - 0.01 : 0.995;
+        const v = Math.min(max, Math.max(min, at(ev)));
+        s.batch(`bands-drag:${gid}`, () => {
+          s.updateLayerField(lower.id, 'prefilter', { nearestBand: [lower.prefilter.nearestBand![0], v] });
+          if (upper) s.updateLayerField(upper.id, 'prefilter', { nearestBand: [v, upper.prefilter.nearestBand![1]] });
+        });
+      };
+      const up = (): void => {
+        canvas.removeEventListener('pointermove', move);
+        canvas.removeEventListener('pointerup', up);
+        canvas.removeEventListener('pointercancel', up);
+      };
+      canvas.addEventListener('pointermove', move);
+      canvas.addEventListener('pointerup', up);
+      canvas.addEventListener('pointercancel', up);
+    });
+
+    return { el, sync: draw };
   }
 
   /** Switch a print group between spot colours and overprinting plates, keeping its inks. */
@@ -435,4 +592,27 @@ function same(a: RGBA, b: RGBA): boolean {
 /** Two colours close enough to count as the same ink when growing a palette. */
 function near(a: RGBA, b: RGBA): boolean {
   return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 0.12;
+}
+
+function rgb(c: RGBA): [number, number, number] {
+  return [c[0], c[1], c[2]];
+}
+
+const histograms = new WeakMap<object, number[]>();
+
+/** Oklab lightness of the picture in 64 bins, sampled, cached per picture. */
+function lightnessHistogram(pic: ImageSource): number[] {
+  const hit = histograms.get(pic.rgba);
+  if (hit) return hit;
+  const bins = new Array<number>(64).fill(0);
+  const n = pic.width * pic.height;
+  const stride = Math.max(1, Math.floor(n / 40000));
+  for (let i = 0; i < n; i += stride) {
+    const o = i * 4;
+    if (pic.rgba[o + 3] < 8) continue;
+    const L = oklab(pic.rgba[o] / 255, pic.rgba[o + 1] / 255, pic.rgba[o + 2] / 255)[0];
+    bins[Math.min(63, Math.max(0, Math.floor(L * 64)))] += 1;
+  }
+  histograms.set(pic.rgba, bins);
+  return bins;
 }

@@ -145,3 +145,18 @@ describe('nearestShare — the closest-colour measure', () => {
     expect(dark).toBeGreaterThan(light);
   });
 });
+
+describe('bandShare — tone ranges', () => {
+  it('adjacent ranges share every lightness exactly once, hard or soft', async () => {
+    const { bandShare } = await import('../src/core/color');
+    const bands: [number, number][] = [[0, 0.3], [0.3, 0.62], [0.62, 0.9]];
+    for (const mix of [0, 0.4, 1]) {
+      for (let L = 0; L <= 0.85; L += 0.01) {
+        const total = bands.reduce((a, [lo, hi]) => a + bandShare(L, lo, hi, mix), 0);
+        expect(total).toBeCloseTo(1, 6);
+      }
+    }
+    // Above the last range is the paper's: nothing prints.
+    expect(bands.reduce((a, [lo, hi]) => a + bandShare(0.97, lo, hi, 0), 0)).toBe(0);
+  });
+});

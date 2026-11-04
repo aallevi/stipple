@@ -195,6 +195,14 @@ export type Prefilter = {
   /** For `nearest`: this colour was picked from the picture by hand, and re-sampling keeps it. */
   nearestPicked?: boolean;
   /**
+   * For `nearest`: divide the picture by explicit tone ranges instead of by
+   * closeness — each ink owns the lightnesses in its `nearestBand`. Set across
+   * a whole group from the histogram in Inks & plates.
+   */
+  nearestRanges?: boolean;
+  /** For `nearest` with ranges: the Oklab lightness this ink owns, [from, to) on 0..1. */
+  nearestBand?: [number, number];
+  /**
    * For `nearest`, filled in by the engine at render time and never stored: the
    * colours this layer competes with — every closest-colour layer in its group,
    * itself included — and the paper. Derived rather than saved so a group can

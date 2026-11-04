@@ -1,4 +1,4 @@
-import { nearestShare, oklab } from '../core/color';
+import { bandShare, nearestShare, oklab } from '../core/color';
 import type { Prefilter } from '../core/types';
 
 /** Decoded source pixels. Kept as raw RGBA so workers can transfer it cheaply. */
@@ -366,5 +366,14 @@ function nearestProjector(f: Prefilter): (r: number, g: number, b: number) => nu
   const mix = Math.max(0, Math.min(1, f.nearestMix ?? 0));
   const tone = !!f.nearestTone;
   const byTone = !!f.nearestByTone;
+  if (f.nearestRanges && f.nearestBand) {
+    const [lo, hi] = f.nearestBand;
+    const room = Math.max(0.05, 1 - ownLab[0]);
+    return (r, g, b) => {
+      const L = oklab(r, g, b)[0];
+      const share = bandShare(L, lo, hi, mix);
+      return tone ? share * Math.min(1, Math.max(0, (1 - L) / room)) : share;
+    };
+  }
   return (r, g, b) => nearestShare(oklab(r, g, b), set, index, paper, mix, tone, byTone);
 }

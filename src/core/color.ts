@@ -484,3 +484,21 @@ export function nearestShare(
   }
   return share;
 }
+
+/**
+ * The tone-range measure: how much of a pixel of lightness `L` belongs to the
+ * band [lo, hi). Hard edges at `mix` 0; above it each edge is a smooth ramp, and
+ * neighbouring bands share their boundary so the coverage still sums to one.
+ * The ends of the scale have no edge to soften — nothing is darker than 0.
+ */
+export function bandShare(L: number, lo: number, hi: number, mix: number): number {
+  const w = Math.max(0, mix) * 0.06;
+  const step = (e: number, x: number): number => {
+    if (w <= 0) return x >= e ? 1 : 0;
+    const t = Math.min(1, Math.max(0, (x - (e - w)) / (2 * w)));
+    return t * t * (3 - 2 * t);
+  };
+  const enter = lo <= 0 ? 1 : step(lo, L);
+  const leave = hi >= 1 ? 0 : step(hi, L);
+  return Math.max(0, enter - leave);
+}

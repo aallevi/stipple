@@ -35,7 +35,7 @@ const LAYER_OWN: Partial<Record<keyof Layer, true | string[]>> = {
   visible: true,
   color: true,
   groupId: true,
-  prefilter: ['channel', 'ink', 'undercolor', 'nearestSet', 'nearestPaperColor', 'nearestPicked'],
+  prefilter: ['channel', 'ink', 'undercolor', 'nearestSet', 'nearestPaperColor', 'nearestPicked', 'nearestBand'],
   distribution: ['angle', 'seed'],
 };
 
