@@ -1,3 +1,4 @@
+import { oklab } from '../core/color';
 import { BLEND_MODES, type BlendMode } from '../core/types';
 import { createProgram, FULLSCREEN_VS, type GL, type Program } from './context';
 
@@ -88,8 +89,47 @@ uniform int uView;
 uniform float uSplit;      // 0..1 across the picture
 uniform float uLine;       // divider half-width, in picture UV
 uniform float uUnder;      // 0..1, the photo shown through the paper
+// The Inks view: the photo with every pixel given its closest ink, flat.
+uniform int uInkCount;
+uniform vec3 uInk[9];
+uniform vec3 uInkLab[9];
+uniform vec2 uBand[9];
+uniform int uInkMode;      // 0 closest colour, 1 closest lightness, 2 tone ranges
+uniform vec3 uPaperRGB;
 in vec2 vUV;
 out vec4 outColor;
+
+float toLinear(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+vec3 oklab(vec3 c) {
+  vec3 l = vec3(toLinear(c.r), toLinear(c.g), toLinear(c.b));
+  float L = pow(max(0.4122214708 * l.r + 0.5363325363 * l.g + 0.0514459929 * l.b, 0.0), 1.0 / 3.0);
+  float M = pow(max(0.2119034982 * l.r + 0.6806995451 * l.g + 0.1073969566 * l.b, 0.0), 1.0 / 3.0);
+  float S = pow(max(0.0883024619 * l.r + 0.2817188376 * l.g + 0.6299787005 * l.b, 0.0), 1.0 / 3.0);
+  return vec3(0.2104542553 * L + 0.7936177850 * M - 0.0040720468 * S,
+              1.9779984951 * L - 2.4285922050 * M + 0.4505937099 * S,
+              0.0259040371 * L + 0.7827717662 * M - 0.8086757660 * S);
+}
+vec3 inksOf(vec3 photo) {
+  vec3 p = oklab(photo);
+  if (uInkMode == 2) {
+    for (int i = 0; i < 9; i++) {
+      if (i >= uInkCount) break;
+      if (p.x >= uBand[i].x && p.x < uBand[i].y) return uInk[i];
+    }
+    return uPaperRGB;
+  }
+  float k = uInkMode == 1 ? 0.0 : 1.0;
+  float best = 1e9;
+  vec3 c = uPaperRGB;
+  for (int i = 0; i < 9; i++) {
+    if (i >= uInkCount) break;
+    vec3 d = p - uInkLab[i];
+    float e = d.x * d.x + k * (d.y * d.y + d.z * d.z);
+    if (e < best) { best = e; c = uInk[i]; }
+  }
+  return c;
+}
+
 void main() {
   // The shared geometry is an oversized triangle, so everything past the
   // destination rectangle has to drop out; leaving it to CLAMP_TO_EDGE would
@@ -108,7 +148,9 @@ void main() {
   }
   vec4 drawing = vec4(c.rgb + bg * (1.0 - c.a), c.a + bgA * (1.0 - c.a));
   vec4 original = vec4(photo, 1.0);
-  if (uView == 1) {
+  if (uView == 3) {
+    outColor = vec4(inksOf(photo), 1.0);
+  } else if (uView == 1) {
     outColor = original;
   } else if (uView == 2) {
     float d = vUV.x - uSplit;
@@ -120,9 +162,21 @@ void main() {
 }
 `;
 
+/**
+ * The inks the Inks view reduces the photo to: colours with an optional paper
+ * as the last candidate, matched by colour, by lightness, or by tone ranges.
+ */
+export type PreviewInks = {
+  colours: [number, number, number][];
+  mode: 'colour' | 'tone' | 'ranges';
+  bands?: [number, number][];
+  paper: [number, number, number] | null;
+};
+
 /** How the screen shows the picture. Never reaches an export. */
 export type PreviewView = {
-  view: 'drawing' | 'original' | 'split';
+  view: 'drawing' | 'original' | 'split' | 'inks';
+  inks?: PreviewInks;
   /** Divider position, 0..1 across the picture. */
   split: number;
   /** 0..1: how much of the photo shows through the paper under the drawing. */
@@ -185,7 +239,25 @@ export class Compositor {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, preview?.source ?? tex);
     gl.uniform1i(u.uSource!, 1);
-    gl.uniform1i(u.uView!, view.view === 'original' ? 1 : view.view === 'split' ? 2 : 0);
+    gl.uniform1i(u.uView!, view.view === 'original' ? 1 : view.view === 'split' ? 2 : view.view === 'inks' ? 3 : 0);
+    const inks = view.inks;
+    const cols = inks ? [...inks.colours, ...(inks.paper && inks.mode !== 'ranges' ? [inks.paper] : [])].slice(0, 9) : [];
+    const rgb = new Float32Array(27);
+    const lab = new Float32Array(27);
+    const band = new Float32Array(18);
+    cols.forEach((c, i) => {
+      rgb.set(c, i * 3);
+      lab.set(oklab(c[0], c[1], c[2]), i * 3);
+      const b = inks?.bands?.[i];
+      if (b) band.set(b, i * 2);
+    });
+    gl.uniform1i(u.uInkCount!, cols.length);
+    gl.uniform3fv(u.uInk!, rgb);
+    gl.uniform3fv(u.uInkLab!, lab);
+    gl.uniform2fv(u.uBand!, band);
+    gl.uniform1i(u.uInkMode!, inks?.mode === 'tone' ? 1 : inks?.mode === 'ranges' ? 2 : 0);
+    const pp = inks?.paper ?? [1, 1, 1];
+    gl.uniform3f(u.uPaperRGB!, pp[0], pp[1], pp[2]);
     gl.uniform1f(u.uSplit!, view.split);
     gl.uniform1f(u.uLine!, preview ? preview.linePx / Math.max(1, preview.widthPx) : 0);
     gl.uniform1f(u.uUnder!, view.under);

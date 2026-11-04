@@ -14,6 +14,8 @@ import { rasterBitmap } from '../shape/import';
 import { button, colorControl, h, raw, readout, section, select, slider, type Control, type Interaction, installTouchSliders } from './controls';
 import { InksPanel } from './inks';
 import { Inspector } from './inspector';
+import { extractPalette } from '../core/color';
+import type { PreviewInks } from '../gl/composite';
 import { LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
 import { PRESETS } from './presets';
@@ -83,6 +85,7 @@ export class App {
       this.shapes.setSelected(this.store.layer(id)?.shapeId);
       this.inspector.update(id);
       this.inks.update();
+      this.syncPreviewInks();
     });
     this.shapes = new ShapesPanel(
       this.store,
@@ -136,6 +139,7 @@ export class App {
       else this.shapes.setSelected(this.selectedShapeId());
       this.inspector.update(this.layers.selected);
       this.inks.update();
+      this.syncPreviewInks();
       // Undo, a preset and a freshly opened image all rewrite the canvas
       // settings without going through those controls, so push the values back.
       if (change.global) this.document.sync();
@@ -772,6 +776,7 @@ export class App {
       ['drawing', 'Drawing', 'Show the drawing'],
       ['original', 'Original', 'Show the photo it was made from'],
       ['split', 'Split', 'Photo on the left, drawing on the right \u2014 drag the divider'],
+      ['inks', 'Inks', 'The picture in just the print\u2019s inks, flat \u2014 or in its own eight colours when there is no print yet'],
     ] as const;
     const buttons = views.map(([v, label, title]) => {
       const b = button(label, () => {
@@ -794,11 +799,46 @@ export class App {
     const sync = (): void => {
       const p = this.engine.getPreview();
       for (const [v, b] of buttons) b.classList.toggle('on', p.view === v);
-      underRow.hidden = p.view === 'original';
+      underRow.hidden = p.view === 'original' || p.view === 'inks';
       this.splitHandle.hidden = p.view !== 'split';
     };
     // Synced once the engine exists — see the constructor.
     return { el, sync };
+  }
+
+  /**
+   * What the Inks view reduces the photo to: the print in hand, with its
+   * paper and its way of dividing the picture — or, with no print, the
+   * picture's own eight colours, found by the same clustering as "Sample the
+   * colours".
+   */
+  private previewInksKey = '';
+  private autoInks: { pic: unknown; colours: [number, number, number][] } | null = null;
+  private syncPreviewInks(): void {
+    const a = this.inks?.active();
+    const pic = this.engine.sourceImage;
+    let spec: PreviewInks | undefined;
+    if (a) {
+      const list = this.inks.inks(a.id);
+      const f = list[0]?.prefilter;
+      const ranges = !!f?.nearestRanges && list.every((l) => l.prefilter.nearestBand);
+      const bg = this.store.get().canvas.background;
+      spec = {
+        colours: list.map((l) => { const c = l.prefilter.ink ?? l.color.color; return [c[0], c[1], c[2]]; }),
+        mode: ranges ? 'ranges' : f?.nearestByTone ? 'tone' : 'colour',
+        bands: ranges ? list.map((l) => l.prefilter.nearestBand!) : undefined,
+        paper: f?.nearestPaper || ranges ? [bg[0], bg[1], bg[2]] : null,
+      };
+    } else if (pic) {
+      if (this.autoInks?.pic !== pic) {
+        this.autoInks = { pic, colours: extractPalette(pic, 8, null).map((c) => [c[0], c[1], c[2]] as [number, number, number]) };
+      }
+      spec = { colours: this.autoInks.colours, mode: 'colour', paper: null };
+    }
+    const key = JSON.stringify(spec ?? null);
+    if (key === this.previewInksKey) return;
+    this.previewInksKey = key;
+    this.engine.setPreview({ inks: spec });
   }
 
   /** Where the picture sits on screen, in CSS pixels relative to the stage. */
@@ -879,6 +919,7 @@ export class App {
       this.engine.expectHeavy();
       this.engine.setSource(src);
       this.dropZone.hidden = true;
+      this.syncPreviewInks();
       // Take the image's *shape*, not its pixel count.
       //
       // Adopting the source dimensions outright, as this used to, meant the

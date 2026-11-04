@@ -584,7 +584,8 @@ const compare = await page.evaluate(async () => {
   const png = await digest(await s.exportPNG(1));
   const svg = await s.exportSVG();
   const out = [];
-  for (const v of [{ view: 'original' }, { view: 'split', split: 0.3 }, { view: 'drawing', under: 0.8 }]) {
+  for (const v of [{ view: 'original' }, { view: 'split', split: 0.3 }, { view: 'drawing', under: 0.8 },
+    { view: 'inks', inks: { colours: [[0.8, 0.2, 0.2], [0.2, 0.5, 0.2]], mode: 'colour', paper: [1, 1, 1] } }]) {
     s.engine.setPreview(v);
     s.engine.render(true);
     out.push((await digest(await s.exportPNG(1))) === png && (await s.exportSVG()) === svg);
@@ -592,7 +593,7 @@ const compare = await page.evaluate(async () => {
   s.engine.setPreview({ view: 'drawing', under: 0, split: 0.5 });
   return out;
 });
-check('the compare view never reaches an export — Original, Split and photo-under leave PNG and SVG byte-identical',
+check('the compare view never reaches an export — Original, Split, photo-under and Inks leave PNG and SVG byte-identical',
   compare.every(Boolean), compare.map((ok) => (ok ? 'same' : 'DIFFERENT')).join(', '));
 
 // --- spot colours are a group: one layer per ink, regions that never overlap

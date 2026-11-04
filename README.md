@@ -75,9 +75,10 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
 4. **Work down the sidebar.** The sections follow the signal: *Source → Image adjust →
    Ink → Tone mask → Distribution → Shape → Size → Rotation → Colour → Transform →
    Blend*. A setting only affects the sections below it.
-5. **Compare** with the photo using the panel on the canvas: *Original*, *Split* (drag
-   the orange divider) or *Photo under* to see it faintly through the paper. It is only
-   a view and never appears in an export.
+5. **Compare** with the photo beside *Fit*: *Original*, *Split* (drag the orange
+   divider), *Inks* — the picture in just your print's inks, flat, or in its own eight
+   colours before there is a print — or *Under* to see it faintly through the paper.
+   It is only a view and never appears in an export.
 6. **Export** to PNG, SVG or PDF, or **Plates** for screen printing.
 
 ### From photo to screens
@@ -97,9 +98,11 @@ is a group of layers, one per ink.
   mix, as process printing does. *Inks print* switches a group between the two and keeps
   its inks.
 - **Edit the inks.** Each swatch is one ink layer: recolour it, or press its *×* to remove
-  that ink. *Sample the colours*, *Posterise the tones*, an ink set, or *Pick a colour
-  from the picture* for a small detail the sampling missed — picked inks stay when you
-  sample again. Select the group to change every ink at once, or one layer to give that
+  that ink. *Sample the colours* (by area), *Sample, favouring details* (every colour
+  counts the same, so a small distinct detail wins an ink), *Posterise the tones*, an
+  ink set, or *Pick a colour from the picture* — picked inks stay when you sample
+  again. *Divide by → Tone ranges* shows the histogram: drag where each ink starts and
+  stops. Select the group to change every ink at once, or one layer to give that
   ink its own shape, size or pattern.
 - **Export plates** writes one SVG film per ink, solid black on white, plus a colour
   proof, with identical registration marks on every film.

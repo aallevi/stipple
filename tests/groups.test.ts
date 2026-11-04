@@ -160,3 +160,20 @@ describe('bandShare — tone ranges', () => {
     expect(bands.reduce((a, [lo, hi]) => a + bandShare(0.97, lo, hi, 0), 0)).toBe(0);
   });
 });
+
+describe('extractPalette — favouring details', () => {
+  it('lets a small distinct colour win an ink that area sampling averages away', async () => {
+    const { extractPalette } = await import('../src/core/color');
+    const W = 200, H = 200, rgba = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      // Three browns with a little noise, and a red patch of about 1%.
+      const t = x / W, n = ((x * 7 + y * 13) % 9) - 4;
+      let c = t < 0.33 ? [82, 46, 28] : t < 0.66 ? [150, 100, 62] : [205, 160, 100];
+      if ((x - 150) ** 2 + (y - 60) ** 2 < 11 ** 2) c = [205, 30, 25];
+      rgba.set([c[0] + n, c[1] + n, c[2] + n, 255], (y * W + x) * 4);
+    }
+    const red = (p: number[][]) => p.some((c) => c[0] > 0.6 && c[1] < 0.3 && c[2] < 0.3);
+    expect(red(extractPalette({ width: W, height: H, rgba }, 3, null, 20000, false))).toBe(false);
+    expect(red(extractPalette({ width: W, height: H, rgba }, 3, null, 20000, true))).toBe(true);
+  });
+});

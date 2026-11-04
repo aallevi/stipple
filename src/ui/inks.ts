@@ -228,13 +228,13 @@ export class InksPanel {
     };
 
     /** Re-sample, keeping hand-picked inks and filling the rest from the picture. */
-    const resample = (n: number, byTone: boolean, key: string): void => {
+    const resample = (n: number, byTone: boolean, key: string, detail = false): void => {
       const pic = this.opts.getSource();
       if (!pic) return this.opts.notify('Open a picture first', true);
       const list = inks();
       const picked = list.filter((l) => l.prefilter.nearestPicked).map((l) => l.prefilter.ink!);
       const auto = Math.max(0, n - picked.length);
-      const sampled = auto ? (byTone ? toneRamp(pic, auto + picked.length, paper()) : extractPalette(pic, auto + picked.length, paper())) : [];
+      const sampled = auto ? (byTone ? toneRamp(pic, auto + picked.length, paper()) : extractPalette(pic, auto + picked.length, paper(), 20000, detail)) : [];
       const found = sampled.filter((c) => !picked.some((q) => near(q, c))).slice(0, auto);
       const colours: RGBA[] = [];
       let f = 0;
@@ -346,7 +346,9 @@ export class InksPanel {
     controls.push(
       group('Choosing the inks'),
       raw(button('Sample the colours', () => resample(inks().length, false, 'extract'), 'sm',
-        'Find the colours the picture is made of. Inks you picked by hand are kept')),
+        'Find the colours the picture is made of, by area. Inks you picked by hand are kept')),
+      raw(button('Sample, favouring details', () => resample(inks().length, false, 'extract-detail', true), 'sm',
+        'Find the colours, giving rare ones more weight, so a small distinct detail can win an ink of its own')),
     );
     if (kind === 'spot') {
       controls.push(raw(button('Posterise the tones', () => resample(inks().length, true, 'posterise'), 'sm',

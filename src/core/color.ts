@@ -209,6 +209,15 @@ export function extractPalette(
   k: number,
   paper: RGBA | null = null,
   sampleTarget = 20000,
+  /**
+   * Count colours, not area: every colour present in the picture weighs about
+   * the same however much of it there is (each sample weighs 1 / how many
+   * samples share its colour cell), so a small distinct detail — a red mouth
+   * in a brown face — can win an ink of its own instead of being averaged into
+   * the large areas around it. Cells holding less than 0.2% of the picture are
+   * left out as noise, so a stray pixel still cannot claim a screen.
+   */
+  favourDetail = false,
 ): RGBA[] {
   const total = src.width * src.height;
   const stride = Math.max(1, Math.floor(total / sampleTarget));
@@ -229,6 +238,23 @@ export function extractPalette(
   const n = pts.length / 3;
   const want = Math.max(1, Math.min(k, n));
   if (n === 0) return [];
+  const weight = new Float64Array(n).fill(1);
+  if (favourDetail) {
+    const cell = (i: number): number => {
+      const L = Math.min(11, Math.max(0, Math.floor(pts[i * 3] * 12)));
+      const A = Math.min(11, Math.max(0, Math.floor((pts[i * 3 + 1] + 0.4) * 15)));
+      const B = Math.min(11, Math.max(0, Math.floor((pts[i * 3 + 2] + 0.4) * 15)));
+      return (L * 12 + A) * 12 + B;
+    };
+    const bins = new Map<number, number>();
+    for (let i = 0; i < n; i++) bins.set(cell(i), (bins.get(cell(i)) ?? 0) + 1);
+    const floor = Math.max(3, n * 0.002);
+    for (let i = 0; i < n; i++) {
+      const c = bins.get(cell(i))!;
+      weight[i] = c < floor ? 0 : 1 / c;
+    }
+    if (!weight.some((w) => w > 0)) weight.fill(1);
+  }
 
   // k-means++ seeding: each new centre is drawn in proportion to how badly the
   // centres so far cover it, which is what stops two inks landing on the same
@@ -246,19 +272,19 @@ export function extractPalette(
       const db = pts[i * 3 + 2] - cen[(c - 1) * 3 + 2];
       const d = dl * dl + da * da + db * db;
       if (d < d2[i]) d2[i] = d;
-      sum += d2[i];
+      sum += d2[i] * weight[i];
     }
     let target = rnd() * sum;
     let pick = n - 1;
     for (let i = 0; i < n; i++) {
-      target -= d2[i];
+      target -= d2[i] * weight[i];
       if (target <= 0) { pick = i; break; }
     }
     cen[c * 3] = pts[pick * 3]; cen[c * 3 + 1] = pts[pick * 3 + 1]; cen[c * 3 + 2] = pts[pick * 3 + 2];
   }
 
   const sums = new Float64Array(want * 3);
-  const counts = new Int32Array(want);
+  const counts = new Float64Array(want);
   for (let iter = 0; iter < 14; iter++) {
     sums.fill(0);
     counts.fill(0);
@@ -272,10 +298,11 @@ export function extractPalette(
         const d = dl * dl + da * da + db * db;
         if (d < best) { best = d; bi = c; }
       }
-      sums[bi * 3] += pts[i * 3];
-      sums[bi * 3 + 1] += pts[i * 3 + 1];
-      sums[bi * 3 + 2] += pts[i * 3 + 2];
-      counts[bi] += 1;
+      const w = weight[i];
+      sums[bi * 3] += pts[i * 3] * w;
+      sums[bi * 3 + 1] += pts[i * 3 + 1] * w;
+      sums[bi * 3 + 2] += pts[i * 3 + 2] * w;
+      counts[bi] += w;
     }
     for (let c = 0; c < want; c++) {
       if (counts[c] === 0) continue;
