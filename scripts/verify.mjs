@@ -573,6 +573,28 @@ check('registration marks, identically placed on every film',
   plates.marks.every((m) => m >= 4) && new Set(plates.viewBox).size === 1,
   `${plates.marks.join(', ')} marks · ${plates.viewBox[0]}`);
 
+// --- the comparison view is a way of looking, never part of a file ---------
+// Original, Split and "photo under" are drawn in the screen pass only. If any of
+// it leaked into an exporter, a print would quietly carry the photograph.
+const compare = await page.evaluate(async () => {
+  const s = window.__stipple;
+  const digest = async (blob) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))]
+    .map((x) => x.toString(16).padStart(2, '0')).join('');
+  s.engine.setPreview({ view: 'drawing', under: 0, split: 0.5 });
+  const png = await digest(await s.exportPNG(1));
+  const svg = await s.exportSVG();
+  const out = [];
+  for (const v of [{ view: 'original' }, { view: 'split', split: 0.3 }, { view: 'drawing', under: 0.8 }]) {
+    s.engine.setPreview(v);
+    s.engine.render(true);
+    out.push((await digest(await s.exportPNG(1))) === png && (await s.exportSVG()) === svg);
+  }
+  s.engine.setPreview({ view: 'drawing', under: 0, split: 0.5 });
+  return out;
+});
+check('the compare view never reaches an export — Original, Split and photo-under leave PNG and SVG byte-identical',
+  compare.every(Boolean), compare.map((ok) => (ok ? 'same' : 'DIFFERENT')).join(', '));
+
 await page.screenshot({ path: `${OUT}/app.png`, fullPage: false });
 await browser.close();
 

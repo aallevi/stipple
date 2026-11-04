@@ -199,6 +199,58 @@ select:hover { background: var(--hover); }
 .toast.visible { opacity: 1; }
 .toast.error { border-color: var(--danger); color: var(--danger); }
 
+/* Compare, on screen only: which view, and how much photo under the paper. */
+.compare {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.compare[hidden] { display: none; }
+.compare .btn.on { background: var(--accent); color: var(--accent-text); }
+.compare .ctl.compare-under { grid-template-columns: auto 1fr; gap: 6px; min-height: 0; }
+.compare .ctl.compare-under[hidden] { display: none; }
+.compare-under input[type='range'] { width: 100px; }
+
+/* The split divider: a hit area much wider than the line it carries, so a
+   thumb can find it. The orange line itself is drawn by the engine. */
+.split-handle {
+  position: absolute;
+  z-index: 1;
+  width: 28px;
+  margin-left: -14px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.split-handle[hidden] { display: none; }
+.split-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 34px;
+  margin: -17px 0 0 -7px;
+  background: var(--accent);
+  border: 1px solid var(--text);
+}
+.split-grip::before,
+.split-grip::after {
+  content: '';
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  width: 1px;
+  background: var(--text);
+}
+.split-grip::before { left: 4px; }
+.split-grip::after { right: 4px; }
+
 /* The empty stage: a place to put a picture, and nothing else. */
 .drop-zone {
   position: absolute;
@@ -931,6 +983,11 @@ input[type='range']::-moz-range-thumb {
   /* No scroll area inside the scrolling panel: a list that scrolls on its own
      catches the thumb and the page stops moving. The stack just grows. */
   .layer-list { max-height: none; overflow: visible; }
+
+  .compare { top: 6px; right: 6px; padding: 4px; gap: 4px; }
+  .compare-under input[type='range'] { width: 84px; }
+  .compare .btn { padding: 4px 8px; font-size: 12px; }
+  .compare .ctl.compare-under { font-size: 12px; }
 
   /* Frame timings are for tuning the engine, not for a phone screen. */
   .hud { display: none; }

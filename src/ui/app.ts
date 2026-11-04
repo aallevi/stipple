@@ -98,6 +98,8 @@ export class App {
     installTouchSliders(root);
     this.bindViewport();
     this.bindDrop();
+    this.bindSplit();
+    this.compare.sync();
     this.bindKeys();
 
     this.store.subscribe((project, change) => {
@@ -625,7 +627,99 @@ export class App {
    * onto a drawing in progress to swap the picture under it. Shapes have their
    * own drop target in the Shape section, which catches its drops first.
    */
-  private stage = h('div', { class: 'stage' }, this.canvas, this.dropZone, this.hud, this.toast);
+  private splitHandle = h('div', { class: 'split-handle', hidden: '' }, h('span', { class: 'split-grip' }));
+  private compare = this.buildCompare();
+  private stage = h('div', { class: 'stage' },
+    this.canvas, this.splitHandle, this.compare.el, this.dropZone, this.hud, this.toast);
+
+  /**
+   * Compare the drawing with the photo it came from, on screen only.
+   *
+   * A view, not a setting: nothing here is saved, undoable or exported, which is
+   * the point — you can look at the original as much as you like without any of
+   * it ending up in a file. The engine draws it in its screen pass, which the
+   * exporters never use.
+   */
+  private buildCompare(): { el: HTMLElement; sync(): void } {
+    const views = [
+      ['drawing', 'Drawing', 'Show the drawing'],
+      ['original', 'Original', 'Show the photo it was made from'],
+      ['split', 'Split', 'Photo on the left, drawing on the right \u2014 drag the divider'],
+    ] as const;
+    const buttons = views.map(([v, label, title]) => {
+      const b = button(label, () => {
+        this.engine.setPreview({ view: v });
+        sync();
+      }, 'sm', title);
+      return [v, b] as const;
+    });
+    const under = h('input', { type: 'range', min: '0', max: '100', step: '1', value: '0' }) as HTMLInputElement;
+    const underRow = h('label', { class: 'ctl compare-under', title: 'Let the photo show faintly through the paper under the dots' },
+      h('span', { class: 'ctl-label' }, 'Photo under'), under);
+    under.addEventListener('input', () => {
+      this.engine.setPreview({ under: Number(under.value) / 100 });
+      under.style.setProperty('--fill', `${under.value}%`);
+    });
+    const el = h('div', { class: 'compare' },
+      h('div', { class: 'tool-group' }, ...buttons.map(([, b]) => b)),
+      underRow,
+    );
+    const sync = (): void => {
+      const p = this.engine.getPreview();
+      for (const [v, b] of buttons) b.classList.toggle('on', p.view === v);
+      underRow.hidden = p.view === 'original';
+      this.splitHandle.hidden = p.view !== 'split';
+    };
+    // Synced once the engine exists — see the constructor.
+    return { el, sync };
+  }
+
+  /** Where the picture sits on screen, in CSS pixels relative to the stage. */
+  private pictureRect(): { x: number; y: number; w: number; h: number } {
+    const { width, height } = this.store.get().canvas;
+    const v = this.engine.getViewport();
+    const cw = this.canvas.clientWidth;
+    const ch = this.canvas.clientHeight;
+    const w = width * v.zoom;
+    const hh = height * v.zoom;
+    return { x: v.panX + (cw - w) / 2, y: v.panY + (ch - hh) / 2, w, h: hh };
+  }
+
+  private bindSplit(): void {
+    const handle = this.splitHandle;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent): void => {
+        const r = this.pictureRect();
+        const box = this.stage.getBoundingClientRect();
+        const t = (ev.clientX - box.left - r.x) / Math.max(1, r.w);
+        this.engine.setPreview({ split: Math.min(1, Math.max(0, t)) });
+      };
+      const up = (): void => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointercancel', up);
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointercancel', up);
+    });
+  }
+
+  /** Keep the divider on the picture as it is panned, zoomed and dragged. */
+  private placeSplit(): void {
+    const hasPicture = this.dropZone.hidden;
+    this.compare.el.hidden = !hasPicture;
+    if (this.splitHandle.hidden || !hasPicture) return;
+    const r = this.pictureRect();
+    const split = this.engine.getPreview().split;
+    const top = Math.max(0, r.y);
+    const bottom = Math.min(this.canvas.clientHeight, r.y + r.h);
+    this.splitHandle.style.left = `${r.x + split * r.w}px`;
+    this.splitHandle.style.top = `${top}px`;
+    this.splitHandle.style.height = `${Math.max(0, bottom - top)}px`;
+  }
 
   private bindDrop(): void {
     const stage = this.stage;
@@ -850,6 +944,7 @@ export class App {
       if (this.frameTimes.length > 30) this.frameTimes.shift();
     }
     this.updateHUD();
+    this.placeSplit();
     requestAnimationFrame(this.loop);
   };
 

@@ -129,6 +129,14 @@ layer is one plate. `Split into ink plates…` builds the second for you. Mixing
 a spot-ink layer that also measures one ink — is allowed, and draws only where that ink
 is needed but in several inks; it is rarely what a print wants.
 
+**Compare** — the small panel at the top right of the canvas. *Drawing* is the work,
+*Original* is the photo it was made from, and *Split* puts the photo left of an orange
+divider and the drawing right of it; drag the divider's grip. *Photo under* lets the
+photo show faintly through the paper beneath the dots, like tracing paper. All of it is
+drawn in the screen pass only: it is not saved, not undoable, and an export made while
+looking at the original is byte-for-byte the export you would get otherwise —
+`npm run verify` checks exactly that.
+
 ## Printing it by hand
 
 There are two ways to get from a photograph to a set of screens, and they make

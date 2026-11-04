@@ -5,7 +5,7 @@ import { generateHalftone } from '../dist/halftone';
 import { generateJittered } from '../dist/jittered';
 import { generateVoronoi, VoronoiGPU } from '../dist/voronoi';
 import type { GenContext, PointBuffer } from '../dist/types';
-import { Compositor } from '../gl/composite';
+import { Compositor, DEFAULT_PREVIEW, type PreviewView } from '../gl/composite';
 import { createContext, createFullscreenQuad, RenderTarget, type GL } from '../gl/context';
 import { makeView, PointRenderer, type PointBatch } from '../gl/renderer';
 import { DensityMap, type ImageSource } from '../image/density';
@@ -133,6 +133,22 @@ export class Engine {
 
   getViewport(): Viewport {
     return this.viewport;
+  }
+
+  /**
+   * Compare the drawing with the photo, on screen only. Stored here rather
+   * than in the project, so it is not saved, not undoable and not exported:
+   * it is a way of looking, not part of the work.
+   */
+  private preview: PreviewView = { ...DEFAULT_PREVIEW };
+
+  setPreview(v: Partial<PreviewView>): void {
+    this.preview = { ...this.preview, ...v };
+    this.needsRender = true;
+  }
+
+  getPreview(): PreviewView {
+    return this.preview;
   }
 
   /**
@@ -473,7 +489,7 @@ export class Engine {
       (2 * (h - dy - dh)) / h - 1,
       (2 * dw) / w,
       (2 * dh) / h,
-    ]);
+    ], { source: this.sourceTex, view: this.preview, linePx: 1.5 * dpr, widthPx: dw });
 
     // Compositing and the `below` readback sample these targets 1:1, so leave
     // the filter where those passes expect it.

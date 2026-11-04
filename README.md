@@ -75,7 +75,10 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
 4. **Work down the sidebar.** The sections follow the signal: *Source → Image adjust →
    Ink → Tone mask → Distribution → Shape → Size → Rotation → Colour → Transform →
    Blend*. A setting only affects the sections below it.
-5. **Export** to PNG, SVG or PDF, or **Plates** for screen printing.
+5. **Compare** with the photo using the panel on the canvas: *Original*, *Split* (drag
+   the orange divider) or *Photo under* to see it faintly through the paper. It is only
+   a view and never appears in an export.
+6. **Export** to PNG, SVG or PDF, or **Plates** for screen printing.
 
 ### From photo to screens
 

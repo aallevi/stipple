@@ -77,7 +77,14 @@ void main() {
 const PRESENT_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
+uniform sampler2D uSource;
 uniform vec4 uBackground;
+// Preview-only comparison, all of it here in the screen pass and nowhere on the
+// export path: 0 = the drawing, 1 = the original photo, 2 = split at uSplit.
+uniform int uView;
+uniform float uSplit;      // 0..1 across the picture
+uniform float uLine;       // divider half-width, in picture UV
+uniform float uUnder;      // 0..1, the photo shown through the paper
 in vec2 vUV;
 out vec4 outColor;
 void main() {
@@ -86,10 +93,40 @@ void main() {
   // smear the border pixels across the rest of the view.
   if (any(lessThan(vUV, vec2(0.0))) || any(greaterThan(vUV, vec2(1.0)))) discard;
   vec4 c = texture(uTex, vUV);
+  // The source is uploaded top row first, the stack is rendered bottom-up.
+  vec3 photo = texture(uSource, vec2(vUV.x, 1.0 - vUV.y)).rgb;
   vec3 bg = uBackground.rgb * uBackground.a;
-  outColor = vec4(c.rgb + bg * (1.0 - c.a), c.a + uBackground.a * (1.0 - c.a));
+  float bgA = uBackground.a;
+  if (uUnder > 0.0) {
+    // The photo seen through the paper, under the ink: a guide for judging
+    // where the marks sit, as a tracing would be.
+    bg = mix(bg, photo, uUnder);
+    bgA = mix(bgA, 1.0, uUnder);
+  }
+  vec4 drawing = vec4(c.rgb + bg * (1.0 - c.a), c.a + bgA * (1.0 - c.a));
+  vec4 original = vec4(photo, 1.0);
+  if (uView == 1) {
+    outColor = original;
+  } else if (uView == 2) {
+    float d = vUV.x - uSplit;
+    if (abs(d) < uLine) outColor = vec4(1.0, 0.608, 0.129, 1.0);
+    else outColor = d < 0.0 ? original : drawing;
+  } else {
+    outColor = drawing;
+  }
 }
 `;
+
+/** How the screen shows the picture. Never reaches an export. */
+export type PreviewView = {
+  view: 'drawing' | 'original' | 'split';
+  /** Divider position, 0..1 across the picture. */
+  split: number;
+  /** 0..1: how much of the photo shows through the paper under the drawing. */
+  under: number;
+};
+
+export const DEFAULT_PREVIEW: PreviewView = { view: 'drawing', split: 0.5, under: 0 };
 
 export class Compositor {
   private compositeProg: Program;
@@ -128,6 +165,11 @@ export class Compositor {
     tex: WebGLTexture,
     background: [number, number, number, number],
     rect: [number, number, number, number] = [-1, -1, 2, 2],
+    /**
+     * The screen's comparison view. Only `Engine.presentToScreen` passes one;
+     * the export path leaves it out and always gets the plain drawing.
+     */
+    preview?: { source: WebGLTexture | null; view: PreviewView; linePx: number; widthPx: number },
   ): void {
     const { gl } = this;
     const u = this.presentProg.uniforms;
@@ -135,6 +177,15 @@ export class Compositor {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(u.uTex!, 0);
+    const view = preview?.source ? preview.view : DEFAULT_PREVIEW;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, preview?.source ?? tex);
+    gl.uniform1i(u.uSource!, 1);
+    gl.uniform1i(u.uView!, view.view === 'original' ? 1 : view.view === 'split' ? 2 : 0);
+    gl.uniform1f(u.uSplit!, view.split);
+    gl.uniform1f(u.uLine!, preview ? preview.linePx / Math.max(1, preview.widthPx) : 0);
+    gl.uniform1f(u.uUnder!, view.under);
+    gl.activeTexture(gl.TEXTURE0);
     gl.uniform4f(u.uRect!, rect[0], rect[1], rect[2], rect[3]);
     gl.uniform4f(u.uBackground!, background[0], background[1], background[2], background[3]);
     gl.disable(gl.BLEND);
