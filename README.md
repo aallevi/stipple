@@ -1,9 +1,11 @@
+<img src="assets/brand/app-icon.png" width="96" align="right" alt="">
+
 # Stipple
 
 Turn photographs into stippled, screened and line-drawn point art, then split it into
 films you can burn onto screens.
 
-![Stipple](artifacts/app.png)
+![Stipple: a landscape as a four-ink spot print, with Inks & plates and the layer group](assets/screenshot.png)
 
 I've been using this to have some screen printing fun at home, and it's freely available
 to anyone who'd like the same. It isn't a product. It's a tool that has made a lot of
@@ -12,15 +14,20 @@ prints I'm happy with, and I hope it does the same for you.
 **[Try it in your browser →](https://aallevi.github.io/stipple/)** No install needed.
 Everything runs on your machine, and your images never leave it.
 
-- **Layers.** Each layer has its own algorithm, shape, ink, tone mask and blend mode. A
-  layer can also read *the render beneath it* instead of the photo.
+- **Layers and groups.** Each layer has its own algorithm, shape, size, tone mask and
+  blend mode, and can read *the drawing beneath it* instead of the photo. Groups let you
+  edit a set of layers together or one at a time.
 - **Three distributions.** Stochastic (jittered), weighted Voronoi (on the GPU, up to a
   million dots) and classic halftone screens.
 - **Any shape as a dot.** Choose from the built-in shapes or drop in your own SVG or
   transparent PNG. Shapes stay vector all the way out.
-- **Made for printing.** Spot-ink separations, CMYK/duotone/tritone plates, and one
-  black-on-white film per ink with registration marks.
-- **Local.** It runs entirely on your machine. Nothing is uploaded.
+- **Made for printing.** Spot colours that sit side by side or plates that overprint, a
+  palette you sample, pick or set by tone range, and one black-on-white film per ink.
+- **Sizes that mean something.** Everything is relative to the picture, shown in mm or
+  inches: resize or upscale the document and the drawing keeps its proportions.
+- **Compare as you go.** Flip between the drawing, the photo, a split view, and the
+  picture in just your inks — on screen only, never in a file.
+- **Anywhere.** In the browser, as a desktop app, or on a phone. Nothing is uploaded.
 
 ---
 
@@ -70,16 +77,20 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
    `Ctrl+O`. Drop another later to swap the picture under your drawing.
 2. **Pick a preset** to see what's possible: *Classic stipple*, *Voronoi drawing*,
    *Three-angle screens*, *Contour lines* and others.
-3. **Set the document** (top of the sidebar) to the size and dpi you'll print at.
-   Every length is shown in mm, inches or %, and it's the size you'll get.
-4. **Work down the sidebar.** The sections follow the signal: *Source → Image adjust →
-   Ink → Tone mask → Distribution → Shape → Size → Rotation → Colour → Transform →
-   Blend*. A setting only affects the sections below it.
-5. **Compare** with the photo beside *Fit*: *Original*, *Split* (drag the orange
+3. **Set the document** (top of the sidebar) to the size and dpi you'll print at, in
+   pixels and millimetres with a ratio lock. *2×* upscales: the same print, every dot
+   drawn with twice the pixels.
+4. **Make a print** in *Inks & plates*, if you're printing in several inks (below).
+5. **Work down the sidebar.** The selected layer's sections follow the signal: *Source →
+   Image adjust → Measure → Tone mask → Distribution → Shape → Size → Rotation →
+   Colour → Transform → Blend*. A setting only affects the sections below it, and the
+   ⓘ buttons explain the ones whose names don't say enough.
+6. **Compare** with the photo beside *Fit*: *Original*, *Split* (drag the orange
    divider), *Inks* — the picture in just your print's inks, flat, or in its own eight
    colours before there is a print — or *Under* to see it faintly through the paper.
    It is only a view and never appears in an export.
-6. **Export** to PNG, SVG or PDF, or **Plates** for screen printing.
+7. **Export** to PNG, SVG or PDF, or **Plates** for screen printing. Heavy changes show
+   a progress bar over the last drawing instead of freezing the window.
 
 ### From photo to screens
 
@@ -122,11 +133,15 @@ layers to put it in, drag it out to take it out, and *⇱* dissolves the folder.
 | `⌘Z` / `⇧⌘Z` | Undo / redo |
 | `⌘]` / `⌘[` | Raise / lower the selected layer |
 | `0` | Fit to window |
+| `Esc` | Cancel picking a colour |
 
 Use `Ctrl` instead of `⌘` on Windows and Linux. On the canvas, drag to pan, scroll or
-pinch to zoom, and double-click or double-tap to fit. It works on a phone too: swipe
-up and down to scroll the controls, and drag sideways to move a slider. You can also reorder layers by dragging
-the grip, and add a shape by dropping an SVG or PNG on the shape panel.
+pinch to zoom, and double-click or double-tap to fit. Reorder layers by dragging the
+grip, and add a shape by dropping an SVG or PNG on the shape panel.
+
+On a phone, the picture sits on top and the controls scroll underneath; turned
+sideways, they sit side by side. Swipe up and down to scroll, drag sideways to move a
+slider, and use the plain strip down the right edge to scroll past anything.
 
 ### Files
 
@@ -135,7 +150,7 @@ the grip, and add a shape by dropping an SVG or PNG on the shape panel.
 | Images in | PNG, JPEG, WebP, GIF, BMP, plus TIFF in the desktop app |
 | Shapes in | SVG, or PNG/WebP/GIF with transparency |
 | Out | PNG at the document resolution, SVG, PDF, SVG plates |
-| Projects | `.stipple` files from *Save* and *Load* |
+| Projects | *Save* and *Load*: `.stipple` in the desktop app, `.stipple.json` in a browser |
 
 ---
 
@@ -149,6 +164,7 @@ the grip, and add a shape by dropping an SVG or PNG on the shape panel.
 ```bash
 npm test               # unit tests
 npm run verify         # end-to-end browser checks (with `npm run dev` running)
+python3 scripts/make-icon.py   # regenerate the icon and toolbar mark
 ```
 
 Issues and pull requests are welcome. Prints made with it are even more welcome.

@@ -133,10 +133,12 @@ panel at the top of the sidebar. *Spot colours* use **Closest colour**: each lay
 so the screens never print on top of each other. *Overprinting plates* use **One ink**: each layer measures how much of its ink the picture needs, so
 the inks overprint and mix on the paper, the way process printing works.
 
-**Compare** — the small panel at the top right of the canvas. *Drawing* is the work,
-*Original* is the photo it was made from, and *Split* puts the photo left of an orange
-divider and the drawing right of it; drag the divider's grip. *Photo under* lets the
-photo show faintly through the paper beneath the dots, like tracing paper. All of it is
+**Compare** — the switch beside *Fit* in the toolbar (its own row on an upright phone).
+*Drawing* is the work, *Original* is the photo it was made from, *Split* puts the photo
+left of an orange divider and the drawing right of it (drag the divider's grip), and
+*Inks* shows the photo in just the print's inks, flat — or, before there is a print, in
+its own eight colours. *Under* lets the photo show faintly through the paper beneath
+the dots, like tracing paper. All of it is
 drawn in the screen pass only: it is not saved, not undoable, and an export made while
 looking at the original is byte-for-byte the export you would get otherwise —
 `npm run verify` checks exactly that.
@@ -163,7 +165,13 @@ layer — recolour it and that layer changes; change `Inks` and layers are added
 - **Pick a colour from the picture** — tap a small detail the sampling averaged away (a
   red mouth in a brown face). It becomes a layer of its own, and stays when you sample
   again.
-- **Match on** compares the whole colour, or lightness only.
+- **Sample, favouring details** counts colours rather than area, so a small distinct
+  detail — a red mouth in a brown face — can win an ink that plain sampling averages
+  away. Specks under 0.2% of the picture are ignored as noise.
+- **Divide by** shares the picture out by **closest colour**, **closest lightness**, or
+  **tone ranges**: the picture's lightness histogram over a strip of each ink's range,
+  with a handle on every boundary — between inks, and between the lightest ink and bare
+  paper. Drag a handle to move where one ink stops and the next begins.
 - **Soft borders** — 0 is a hard edge between inks; higher dithers the pixels near a
   border between their two closest inks.
 - **Leave paper** lets the stock compete as an ink that never prints, so highlights stay
