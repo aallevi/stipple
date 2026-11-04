@@ -365,5 +365,6 @@ function nearestProjector(f: Prefilter): (r: number, g: number, b: number) => nu
   const paper = p ? oklab(p[0], p[1], p[2]) : null;
   const mix = Math.max(0, Math.min(1, f.nearestMix ?? 0));
   const tone = !!f.nearestTone;
-  return (r, g, b) => nearestShare(oklab(r, g, b), set, index, paper, mix, tone);
+  const byTone = !!f.nearestByTone;
+  return (r, g, b) => nearestShare(oklab(r, g, b), set, index, paper, mix, tone, byTone);
 }

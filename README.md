@@ -82,17 +82,26 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
 
 ### From photo to screens
 
-- **Spot inks.** Set *Colour → Spot inks*, pick 2–8 inks (or *Sample the colours* /
-  *Posterise the tones*), and every dot commits to exactly one ink. *Mixing* runs from
-  flat posterised bands (0) to dithered colour (1). *Leave paper* keeps the highlights
-  as bare stock.
-- **Ink plates.** Choose *Split into ink plates…* above the layer list to rebuild the
-  stack as one halftone plate per ink (CMYK, CMY, RGB, risograph, earth, tritone or
+- **Spot inks.** Set *Colour → Spot inks* and the layer becomes a **group, one layer
+  per ink**, each drawing only where the picture is closest to its colour, so the screens
+  fit together like a puzzle. *Sample the colours*, *Posterise the tones*, or tap
+  *Pick a colour from the picture* for a small detail the sampling missed. Select the
+  group to edit every ink at once, or one layer to give that ink its own shape, size or
+  pattern. *Split into ink plates… → From the picture* does the same in one step.
+- **Overprinting plates.** Choose *Split into ink plates…* above the layer list to rebuild
+  the stack as a group of halftone plates, one per ink (CMYK, CMY, RGB, risograph, earth, tritone or
   duotone), each with its own screen angle. Any plate can be switched to stippling, and
   the same menu offers *↩ Back to the stack from before*.
 - **Plates.** The *Plates* button writes one SVG film per ink, solid black on white,
   plus a colour proof. Every film has identical registration marks. It lists the
   screens it found before writing anything.
+
+### Layers and groups
+
+Groups are folders in the layer list. Select the folder to edit all its layers together
+(each keeps its own colour, screen angle and seed); select a layer inside to change only
+that one. Fold, hide, drag and duplicate a group as one; drop a layer between two of its
+layers to put it in, drag it out to take it out, and *⇱* dissolves the folder.
 
 ### Shortcuts
 

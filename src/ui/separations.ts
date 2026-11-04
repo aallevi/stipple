@@ -1,4 +1,4 @@
-import { defaultLayer } from '../core/defaults';
+import { defaultLayer, uid } from '../core/defaults';
 import { unitPx } from '../core/scale';
 import type { Layer, Project, RGBA } from '../core/types';
 import { inkName } from '../export/plates';
@@ -193,18 +193,28 @@ function isNeutral(c: RGBA): boolean {
  * `colours` are the inks, picked or found; the caller puts the result in a group,
  * which is what gives the layers their set of competitors.
  */
-export function buildColourLayers(colours: RGBA[], groupId: string): Layer[] {
+export function buildColourLayers(
+  colours: RGBA[],
+  groupId: string,
+  /** Every layer starts as a copy of this one — its shape, size and screen — when given. */
+  template?: Layer,
+  picked: boolean[] = [],
+): Layer[] {
   return colours.map((c, i) => {
-    const layer = defaultLayer(inkName(c), 'jittered');
+    const layer: Layer = template
+      ? { ...JSON.parse(JSON.stringify(template)), id: uid('layer'), name: inkName(c) }
+      : defaultLayer(inkName(c), 'jittered');
     layer.groupId = groupId;
     layer.blend = 'multiply';
     layer.prefilter = {
       ...layer.prefilter,
       channel: 'nearest',
       ink: c,
-      nearestMix: 0.15,
-      nearestTone: false,
-      nearestPaper: true,
+      nearestMix: template?.prefilter.nearestMix ?? 0.15,
+      nearestTone: template?.prefilter.nearestTone ?? false,
+      nearestPaper: template?.prefilter.nearestPaper ?? true,
+      nearestByTone: template?.prefilter.nearestByTone ?? false,
+      nearestPicked: !!picked[i],
     };
     layer.color = { ...layer.color, mode: 'solid', color: c };
     // Different seeds, or neighbouring regions would put their dots on the

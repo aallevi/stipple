@@ -190,6 +190,10 @@ export type Prefilter = {
   nearestTone?: boolean;
   /** For `nearest`: the paper competes as a colour, and where it wins nothing prints. */
   nearestPaper?: boolean;
+  /** For `nearest`: match on lightness alone, so a dark-to-light palette posterises the tones. */
+  nearestByTone?: boolean;
+  /** For `nearest`: this colour was picked from the picture by hand, and re-sampling keeps it. */
+  nearestPicked?: boolean;
   /**
    * For `nearest`, filled in by the engine at render time and never stored: the
    * colours this layer competes with — every closest-colour layer in its group,

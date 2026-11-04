@@ -447,9 +447,12 @@ export function nearestShare(
   paper: [number, number, number] | null,
   mix: number,
   tone: boolean,
+  /** Compare lightness alone, ignoring hue — the posterise, as in spot-ink matching. */
+  byTone = false,
 ): number {
+  const k = byTone ? 0 : 1;
   const d = (q: [number, number, number]): number =>
-    (pixel[0] - q[0]) ** 2 + (pixel[1] - q[1]) ** 2 + (pixel[2] - q[2]) ** 2;
+    (pixel[0] - q[0]) ** 2 + k * (pixel[1] - q[1]) ** 2 + k * (pixel[2] - q[2]) ** 2;
   const dist = set.map(d);
   if (paper) dist.push(d(paper));
   if (own < 0 || own >= set.length) return 0;

@@ -595,6 +595,33 @@ const compare = await page.evaluate(async () => {
 check('the compare view never reaches an export — Original, Split and photo-under leave PNG and SVG byte-identical',
   compare.every(Boolean), compare.map((ok) => (ok ? 'same' : 'DIFFERENT')).join(', '));
 
+// --- spot colours are a group: one layer per ink, regions that never overlap
+const spot = await page.evaluate(async () => {
+  const s = window.__stipple;
+  const W = 300, H = 300, rgba = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const c = x < W / 3 ? [82, 46, 28] : x < (2 * W) / 3 ? [168, 115, 71] : [227, 184, 89];
+    rgba.set([...c, 255], (y * W + x) * 4);
+  }
+  s.engine.setSource({ width: W, height: H, rgba });
+  s.applyPreset((await s.presets())[0]);
+  const sel = [...document.querySelectorAll('.ctl')].find((r) => r.querySelector('.ctl-label')?.textContent === 'Colour mode')?.querySelector('select');
+  sel.value = 'spot';
+  sel.dispatchEvent(new Event('change'));
+  await new Promise((r) => setTimeout(r, 800));
+  s.engine.render(true);
+  const p = s.store.get();
+  const plates = await s.exportPlates();
+  return {
+    groups: (p.groups ?? []).length,
+    layers: p.layers.filter((l) => l.groupId && l.prefilter.channel === 'nearest').length,
+    films: plates.files.filter((f) => !f.name.includes('proof')).length,
+  };
+});
+check('Colour → Spot inks makes a colour group, one closest-colour layer and one film per ink',
+  spot.groups === 1 && spot.layers === 3 && spot.films === 3,
+  `${spot.groups} group, ${spot.layers} colour layers, ${spot.films} films`);
+
 await page.screenshot({ path: `${OUT}/app.png`, fullPage: false });
 await browser.close();
 

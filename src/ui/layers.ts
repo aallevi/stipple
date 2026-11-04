@@ -135,7 +135,7 @@ export class LayersPanel {
         const paper = project.canvas.background;
         const colours = src ? extractPalette(src, n, paper) : [];
         if (!colours.length) return;
-        group.name = 'Picture colours';
+        group.name = 'Spot colours';
         layers = buildColourLayers(colours, group.id);
       } else {
         const kind = SEPARATIONS[choice];

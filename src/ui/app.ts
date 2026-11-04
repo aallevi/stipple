@@ -93,6 +93,7 @@ export class App {
       this.engine.voronoiAvailable,
       () => this.engine.sourceImage,
       (done) => this.pickColour(done),
+      (gid) => this.layers.selectGroup(gid),
     );
 
     root.append(this.buildLayout());

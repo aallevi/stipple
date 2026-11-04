@@ -36,8 +36,8 @@ is usually enough to predict what it will do.
         │                     × (1 ± Size jitter)          ── a fraction of the picture
         ├─► Rotation  = Angle + random·Randomness + contour·Follow contours
         └─► Colour    = mode(tone, random) × (1 ± Colour jitter)
-                        or, in Spot inks: nearest ink to the pixel,
-                        dithered towards a second one by Mixing
+                        (spot colours are a group: one layer
+                         per ink, each where its colour is closest)
                                                                    │
                                                                    ▼
                                                     ┌──── the stamp ────┐
@@ -116,18 +116,23 @@ plate. `Nothing` spreads dots evenly, for a spot-ink layer that carries lightnes
 ink each dot takes.
 
 **Colour** — solid, adaptive (hue ramps with tone), sampled from the image, a random
-palette pick per point, or **spot inks**. This is the ink the layer *prints with*, which
+palette pick per point, or **spot inks**, which turns the layer into a colour group (see
+*Printing it by hand*). This is the ink the layer *prints with*, which
 is separate from the ink it *measures* — the Measure section has a button to match one to
 the other.
 
-**How Measure, Colour and the layer stack fit together.** Measure decides where a layer's
-dots go; Colour decides what they print with; the stack decides how many such layers
-there are and how they land on each other (Blend). So there are two ways to a set of
-screens. *One layer, Colour → Spot inks*: dots go where it is dark, and each picks one of
-your inks. *Several layers, each Measure → One ink and Colour → that same ink*: every
-layer is one plate. `Split into ink plates…` builds the second for you. Mixing them —
-a spot-ink layer that also measures one ink — is allowed, and draws only where that ink
-is needed but in several inks; it is rarely what a print wants.
+**How Measure, Colour and the layer stack fit together.** Measure decides *where* a
+layer's dots go; Colour decides *what they print with*; the stack decides how many layers
+there are and how they land on each other (Blend). A group is just a folder of layers:
+select it to edit them together, or select one to edit it alone. It changes how you work,
+not what prints.
+
+So a set of screens is always a group of layers, one per ink, and the two kinds differ
+only in how each layer measures. *Spot colours* — Colour → Spot inks, or Split → From the
+picture — use **Closest colour**: each layer owns the part of the picture nearest its ink,
+so the screens never print on top of each other. *Overprinting plates* — Split → CMYK and
+friends — use **One ink**: each layer measures how much of its ink the picture needs, so
+the inks overprint and mix on the paper, the way process printing works.
 
 **Compare** — the small panel at the top right of the canvas. *Drawing* is the work,
 *Original* is the photo it was made from, and *Split* puts the photo left of an orange
@@ -143,43 +148,41 @@ There are two ways to get from a photograph to a set of screens, and they make
 different-looking prints. The tool supports both, and the difference is worth
 understanding before you pick one.
 
-**Spot inks — one layer, one dot, one ink.** Set `Colour mode → Spot inks`, choose two
-to eight inks, and every dot is printed with exactly one of them. That is the whole
-point: a dot is a hole in a screen, and a screen holds one colour, so a drawing where
-each mark commits to an ink is a drawing you can actually pull. `Mixing` decides how
-strictly each dot is held to its nearest ink:
+**Spot colours — a layer per ink, each where its colour is closest.** Set
+`Colour mode → Spot inks` and the layer becomes a group, one layer per ink, every one a
+copy of the original in shape, size and screen. For each pixel the app finds the ink it
+looks closest to (Oklab distance, so it is the colour that *looks* nearest, not the
+nearest numbers), and only that ink's layer draws there. The regions fit together like a
+puzzle: no two screens print the same spot, and every dot is a real ink.
 
-| `Mixing` | What you get |
-|---|---|
-| 0 | **Posterised.** Every dot takes the nearest ink; areas come out flat and unmixed — brown, light brown, ochre, with visible boundaries between them. |
-| ~0.5 | **Partly mixed.** Dots stray towards a second ink near the boundaries, softening them, while the bands stay readable. |
-| 1 | **Scattered.** Dots dither between the two inks that best rebuild the colour and the eye does the mixing. With cyan, magenta and yellow this is a process print. |
+The Colour section of any layer in the group is the group's palette. Each swatch *is* a
+layer — recolour it and that layer changes; change `Inks` and layers are added or removed.
 
-`Match on` decides what "nearest" means. **Colour** compares the whole colour, which is
-what a scatter separation wants. **Lightness only** ignores hue, so a palette ordered dark
-to light reads the photograph as tonal bands — which is why a portrait printed in three
-earth inks stays a portrait instead of breaking into unrelated hues.
+- **Sample the colours** finds the colours the picture is made of.
+- **Posterise the tones** builds a dark-to-light ramp, matched on lightness with hard
+  borders, which is how a portrait in three earth inks stays a portrait.
+- **Pick a colour from the picture** — tap a small detail the sampling averaged away (a
+  red mouth in a brown face). It becomes a layer of its own, and stays when you sample
+  again.
+- **Match on** compares the whole colour, or lightness only.
+- **Soft borders** — 0 is a hard edge between inks; higher dithers the pixels near a
+  border between their two closest inks.
+- **Leave paper** lets the stock compete as an ink that never prints, so highlights stay
+  bare paper instead of costing a screen.
+- In Measure, **Inside the region** fills each ink's area evenly, like a flat print, or
+  puts more dots where it is darker.
 
-Two buttons build a palette from the picture. **Sample the colours** clusters it in full
-colour, for a scatter print. **Posterise the tones** builds a dark-to-light ramp keeping
-each band's own colour, then sets `Match on` to lightness and `Mixing` to 0 — the whole
-posterise in one press. The readout underneath the swatches says what share of the paper
-each screen would actually cover, which is the number that decides whether an ink is worth
-the pull.
+The readout under the swatches says what share of the paper each screen would cover —
+the number that decides whether an ink is worth the pull. Select one layer of the group
+to give that ink its own shape, size, density or pattern: bigger dots for the shadows,
+lines for one colour. *Split into ink plates… → From the picture · N colours* builds the
+same group in one step.
 
-`Leave paper` adds the stock as a candidate that is matched against but never printed,
-so highlights come out as bare paper instead of spending a whole screen on the palest
-ink. `Propose inks from the image` clusters the photograph and fills the palette with
-the colours it is actually made of, skipping anything close to the paper.
+A single-layer spot-ink layer from an older project still prints as it did, and offers
+*Turn into a colour group*.
 
-One thing to know: by default a layer already gets fewer dots *and* smaller dots in the
-lights, and in spot mode the ink choice lightens them a third time — so the print comes
-out much paler than the photograph. The panel notices and offers **Set up for even
-coverage**, which lays dots down evenly at one size and leaves lightness entirely to
-which ink each dot takes. That is what a real scatter separation does.
-
-**Ink plates — one layer per ink.** `Split into ink plates…` at the top of the layer
-stack replaces the stack with one halftone plate per ink: CMYK, CMY, RGB, risograph,
+**Overprinting plates — one layer per ink, inks that mix.** `Split into ink plates…`
+at the top of the layer stack replaces the stack with a group of halftone plates, one per ink: CMYK, CMY, RGB, risograph,
 earth, tritone or duotone. Here each layer *measures* the coverage of its own ink and
 prints solid in it; the plates multiply, carry the classic 30°-apart screen angles, and only the black
 plate carries the neutrals, so total ink coverage stays printable. Each plate is an
@@ -187,14 +190,13 @@ ordinary layer afterwards — change its ink, its shape, or switch its screen to
 or Voronoi for a stippled plate. The same menu then offers `↩ Back to the stack from
 before`, which restores the layers you had before the first split.
 
-Use spot inks when you want to choose the colours, and when a posterised or hand-printed
-look is the point. Use process separations when you want a faithful reproduction and are
-happy to print C, M, Y and K.
+Use spot colours when you choose the colours and want flat, hand-printed areas. Use
+overprinting plates when you want a faithful reproduction from C, M, Y and K.
 
 **Plates** — the `Plates` button separates whatever is on screen into films: one SVG per
 ink, solid black on white, plus a colour proof, all with identical registration marks in
-a margin outside the artwork. It works on either route — a spot layer is split dot by
-dot, and a stack of solid-coloured layers is split layer by layer — and it tells you
+a margin outside the artwork. It works on either route — every layer that prints one ink becomes that ink's film,
+and an older single-layer spot layer is split dot by dot — and it tells you
 which screens it found before it writes anything. A layer that is not one ink (a hue
 ramp, or colour sampled straight from the image) cannot belong to a single screen, so it
 is left out and named in the warning.

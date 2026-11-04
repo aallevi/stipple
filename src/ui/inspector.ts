@@ -11,7 +11,7 @@ import {
   select, slider, toggle, when, type Control, type Interaction,
 } from './controls';
 import { inkName } from '../export/plates';
-import { INK_SETS } from './separations';
+import { buildColourLayers, INK_SETS } from './separations';
 import { shapeParamControls } from './shapeparams';
 import { formatSpan, lengthSlider } from './units';
 
@@ -61,6 +61,8 @@ export class Inspector {
      * averages away — a small red detail in a mostly brown picture.
      */
     private pickColour: (done: (c: RGBA) => void) => void = () => {},
+    /** Select a group in the layer panel, after this panel has made one. */
+    private selectGroup: (groupId: string) => void = () => {},
   ) {}
 
   /** Rebuild if the layer identity or an option that changes the form did. */
@@ -305,7 +307,7 @@ export class Inspector {
         }),
       ]),
 
-      section('Colour', this.colorControls(id), false, [], 'The ink each dot prints with. Solid is one ink for the whole layer \u2014 the usual choice for a plate. Spot inks lets one layer print with several: every dot picks one of your inks, so one layer can make a whole multi-screen print by itself.'),
+      section('Colour', this.colorControls(id), false, [], 'The ink each dot prints with. Solid is one ink for the whole layer. Spot inks turns the layer into a group with one layer per ink: each draws only where the picture is closest to its colour, so the screens fit together without printing on top of each other, and each ink can have its own shape and size. Pick colours from the picture for details the automatic sampling misses.'),
 
       section('Transform', [
         slider({
@@ -371,36 +373,14 @@ export class Inspector {
    */
   private nearestControls(id: string): Control[] {
     const s = this.store;
-    const ia = this.interaction;
     const L = (): Layer => s.layer(id)!;
-    const peers = (): Layer[] => {
-      const g = L().groupId;
-      return g ? s.get().layers.filter((l) => l.groupId === g && l.prefilter.channel === 'nearest') : [L()];
-    };
     return [
-      colorControl({
-        label: 'This colour', interaction: ia,
-        // Owned and printed are one colour here; changing one changes both.
-        get: () => L().prefilter.ink ?? L().color.color,
-        set: (v) => {
-          s.updateLayerField(id, 'prefilter', { ink: v }, `nearest-colour:${id}`);
-          s.updateLayerField(id, 'color', { mode: 'solid', color: v }, `nearest-colour:${id}`);
-        },
-      }),
-      readout(() => {
-        const n = peers().length;
-        return n > 1 ? `Shares the picture with ${n - 1} other colour${n > 2 ? 's' : ''} in its group`
-          : 'Alone: put it in a group with other colours, or pick one below';
-      }),
-      slider({
-        label: 'Soft borders', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0.15,
-        title: '0 is a hard edge between colours; higher dithers the pixels near a border between their two closest colours',
-        get: () => L().prefilter.nearestMix ?? 0,
-        set: (v) => s.editLayerField(id, 'prefilter', { nearestMix: v }),
-      }),
+      readout(() => (L().groupId
+        ? `Dots go where the picture is closest to ${inkName(L().prefilter.ink ?? L().color.color)}. The inks are set in the Colour section.`
+        : 'Alone, so it owns the whole picture: set Colour \u2192 Spot inks to share it with other inks.')),
       select<'even' | 'tone'>({
         label: 'Inside the region',
-        title: 'Fill a colour\u2019s region evenly, like a flat screenprint, or put more dots where it is darker',
+        title: 'Fill an ink\u2019s region evenly, like a flat screenprint, or put more dots where it is darker',
         options: [
           { value: 'even', label: 'Even fill' },
           { value: 'tone', label: 'Follows the darkness' },
@@ -408,14 +388,6 @@ export class Inspector {
         get: () => (L().prefilter.nearestTone ? 'tone' : 'even'),
         set: (v) => s.editLayerField(id, 'prefilter', { nearestTone: v === 'tone' }),
       }),
-      toggle({
-        label: 'Leave paper',
-        title: 'The paper colour competes too, and where it is closest nothing prints',
-        get: () => !!L().prefilter.nearestPaper,
-        set: (v) => s.editLayerField(id, 'prefilter', { nearestPaper: v }),
-      }),
-      raw(button('Pick another colour from the picture', () => this.pickColour((c) => this.addColourLayer(id, c)),
-        'sm wide', 'Tap the picture on a colour the group is missing — it becomes a new layer of the group')),
     ];
   }
 
@@ -424,7 +396,7 @@ export class Inspector {
    * selected one in everything but its colour. A layer not yet in a group
    * gets one, so there is something for the colours to compete within.
    */
-  private addColourLayer(id: string, c: RGBA): void {
+  private addColourLayer(id: string, c: RGBA, picked = true): void {
     const s = this.store;
     const src = s.layer(id);
     if (!src) return;
@@ -432,7 +404,7 @@ export class Inspector {
     const copy: Layer = JSON.parse(JSON.stringify(src));
     copy.id = uid('layer');
     copy.name = inkName(c);
-    copy.prefilter = { ...copy.prefilter, channel: 'nearest', ink: c };
+    copy.prefilter = { ...copy.prefilter, channel: 'nearest', ink: c, nearestPicked: picked };
     copy.color = { ...copy.color, mode: 'solid', color: c };
     copy.distribution = { ...copy.distribution, seed: Math.floor(Math.random() * 9000) + 1 } as Layer['distribution'];
     if (src.groupId) {
@@ -443,7 +415,9 @@ export class Inspector {
       const at = project.layers.findIndex((l) => l.id === id);
       delete copy.groupId;
       s.addLayer(copy, at + 1);
-      s.createGroup({ id: uid('group'), name: 'Picture colours', collapsed: false }, [id, copy.id]);
+      const gid = uid('group');
+      s.createGroup({ id: gid, name: 'Spot colours', collapsed: false }, [id, copy.id]);
+      this.selectGroup(gid);
     }
   }
 
@@ -617,7 +591,8 @@ export class Inspector {
     const s = this.store;
     const ia = this.interaction;
     const L = (): Layer => s.layer(id)!;
-    const mode = L().color.mode;
+    const inColourGroup = this.isColourGroupLayer(L());
+    const mode = inColourGroup ? 'spot' : L().color.mode;
 
     const controls: Control[] = [
       select<'solid' | 'adaptive' | 'image' | 'multicolor' | 'spot'>({
@@ -627,12 +602,38 @@ export class Inspector {
           { value: 'adaptive', label: 'Ramp (hue from tone)' },
           { value: 'image', label: 'Sample the image' },
           { value: 'multicolor', label: 'Random from palette' },
-          { value: 'spot', label: 'Spot inks (printable)' },
+          { value: 'spot', label: 'Spot inks (one layer per ink, in a group)' },
         ],
-        get: () => L().color.mode,
-        set: (v) => s.editLayerField(id, 'color', { mode: v }),
+        get: () => (this.isColourGroupLayer(L()) ? 'spot' : L().color.mode),
+        set: (v) => {
+          const member = this.isColourGroupLayer(L());
+          if (v === 'spot' && !member) return this.toColourGroup(id);
+          if (member && v !== 'spot') {
+            // Leaving the spot colours: this layer stops competing for a region
+            // and goes back to reading tone, on its own, in whatever mode was chosen.
+            s.batch(`leave-spot:${id}`, () => {
+              s.updateLayerField(id, 'prefilter', { channel: 'luma' });
+              s.updateLayerField(id, 'color', { mode: v });
+            });
+            return;
+          }
+          s.editLayerField(id, 'color', { mode: v });
+        },
       }),
     ];
+
+    if (inColourGroup) {
+      controls.push(
+        ...this.colourGroupControls(id),
+        slider({
+          label: 'Ink opacity', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
+          title: 'Per-dot alpha, on top of the layer opacity',
+          get: () => L().color.alpha,
+          set: (v) => s.editLayerField(id, 'color', { alpha: v }),
+        }),
+      );
+      return controls;
+    }
 
     if (mode === 'solid') {
       controls.push(colorControl({
@@ -667,7 +668,15 @@ export class Inspector {
       );
     }
 
-    if (mode === 'spot') controls.push(...this.spotControls(id));
+    if (mode === 'spot') {
+      // A single-layer spot-ink layer, as projects made before colour groups
+      // have. It still prints, but everything spot is a group now: offer the move.
+      controls.push(
+        hint('This is an older single-layer spot-ink layer: every ink shares one shape and one pattern.'),
+        raw(button('Turn into a colour group \u2014 one layer per ink', () => this.toColourGroup(id), 'sm wide primary')),
+        ...this.spotControls(id),
+      );
+    }
 
     if (mode === 'multicolor') {
       for (let i = 0; i < 3; i++) {
@@ -703,6 +712,202 @@ export class Inspector {
       }));
     }
     return controls;
+  }
+
+  /** A closest-colour layer in a group: one ink of a set of spot colours. */
+  private isColourGroupLayer(l: Layer): boolean {
+    return l.prefilter.channel === 'nearest' && !!l.groupId;
+  }
+
+  /** The colour layers of `id`'s group, top of the stack first — the order the layer list shows. */
+  private colourPeers(id: string): Layer[] {
+    const g = this.store.layer(id)?.groupId;
+    if (!g) return [];
+    return this.store.get().layers.filter((l) => l.groupId === g && l.prefilter.channel === 'nearest').reverse();
+  }
+
+  /**
+   * Turn one layer into a group of spot colours, a layer per ink.
+   *
+   * The inks are its palette if it already had spot inks, otherwise the
+   * picture's own three main colours. Every new layer starts as a copy of
+   * this one, so its shape, size and screen carry over.
+   */
+  private toColourGroup(id: string): void {
+    const s = this.store;
+    const src = s.layer(id);
+    if (!src) return;
+    const paper = s.get().canvas.background;
+    const pic = this.getSource();
+    let colours: RGBA[] = src.color.mode === 'spot' && src.color.palette.length ? src.color.palette : [];
+    if (!colours.length && pic) colours = extractPalette(pic, 3, paper);
+    if (!colours.length) colours = INK_SETS.earth.inks;
+    const template: Layer = JSON.parse(JSON.stringify(src));
+    template.color = { ...template.color, mode: 'solid' };
+    template.prefilter = {
+      ...template.prefilter,
+      nearestPaper: src.color.mode === 'spot' ? src.color.paper != null : true,
+      nearestMix: src.color.mode === 'spot' ? Math.min(1, 0.15 * (1 + src.color.mixing)) : 0.15,
+      nearestByTone: src.color.mode === 'spot' && src.color.matchBy === 'tone',
+    };
+    const pinned = src.color.pinned ?? [];
+    const group = { id: uid('group'), name: 'Spot colours', collapsed: false };
+    const layers = buildColourLayers(colours, group.id, template, colours.map((c) => pinned.some((p) => same(p, c))));
+    s.replaceLayerWithGroup(id, layers, group);
+    this.selectGroup(group.id);
+  }
+
+  /**
+   * The Colour section of a spot-colour group: the group's inks as one palette.
+   *
+   * Each swatch *is* a layer of the group, so changing one recolours that
+   * layer, and changing the count adds or removes layers. Everything about how
+   * the inks divide the picture — matching, borders, paper — belongs to the
+   * group, and applies to all of its layers whichever one is selected.
+   */
+  private colourGroupControls(id: string): Control[] {
+    const s = this.store;
+    const ia = this.interaction;
+    const peers = (): Layer[] => this.colourPeers(id);
+    const first = (): Layer => peers()[0] ?? s.layer(id)!;
+    const paper = (): RGBA => s.get().canvas.background;
+
+    /** One prefilter patch on every layer of the group, as a single undo step. */
+    const setAll = (patch: Partial<Layer['prefilter']>, key: string): void =>
+      s.batch(key, () => { for (const l of peers()) s.updateLayerField(l.id, 'prefilter', patch); });
+
+    /** Give the group these colours, in list order, growing or shrinking it to fit. */
+    const setColours = (colours: RGBA[], key: string, extra: Partial<Layer['prefilter']> = {}): void => {
+      if (!colours.length) return;
+      s.batch(key, () => {
+        let list = peers();
+        // Fewer inks: drop from the top, keeping the colours picked by hand longest.
+        while (list.length > colours.length) {
+          const drop = [...list].reverse().find((l) => !l.prefilter.nearestPicked) ?? list[list.length - 1];
+          s.removeLayer(drop.id);
+          list = peers();
+        }
+        list.forEach((l, i) => {
+          s.updateLayerField(l.id, 'prefilter', { ink: colours[i], ...extra });
+          s.updateLayerField(l.id, 'color', { mode: 'solid', color: colours[i] });
+          s.updateLayer(l.id, { name: inkName(colours[i]) });
+        });
+        for (let i = list.length; i < colours.length; i++) this.addColourLayer(list[0]?.id ?? id, colours[i], false);
+        if (Object.keys(extra).length) for (const l of peers()) s.updateLayerField(l.id, 'prefilter', extra);
+      });
+    };
+
+    /** Re-sample, keeping hand-picked colours and filling the rest from the picture. */
+    const resample = (n: number, byTone: boolean, key: string): void => {
+      const pic = this.getSource();
+      if (!pic) return;
+      const list = peers();
+      const picked = list.filter((l) => l.prefilter.nearestPicked).map((l) => l.prefilter.ink!);
+      const auto = Math.max(0, n - picked.length);
+      // Sample one extra, so a colour you already picked can be skipped without
+      // leaving the group a colour short.
+      const sampled = auto ? (byTone ? toneRamp(pic, auto + picked.length, paper()) : extractPalette(pic, auto + picked.length, paper())) : [];
+      const found = sampled.filter((c) => !picked.some((q) => near(q, c))).slice(0, auto);
+      // Picked colours keep their layers; the unpicked ones take the new colours.
+      const colours: RGBA[] = [];
+      let f = 0;
+      for (const l of list.slice(0, n)) colours.push(l.prefilter.nearestPicked ? l.prefilter.ink! : (found[f++] ?? l.prefilter.ink!));
+      while (colours.length < n && f < found.length) colours.push(found[f++]);
+      setColours(colours, key, byTone ? { nearestByTone: true, nearestMix: 0 } : { nearestByTone: false });
+    };
+
+    let sharesKey = '';
+    let sharesText = '';
+    const shares = (): string => {
+      const pic = this.getSource();
+      if (!pic) return 'Open an image to see how the inks divide it.';
+      const inks = peers().map((l) => l.prefilter.ink ?? l.color.color);
+      const leave = !!first().prefilter.nearestPaper;
+      const byTone = !!first().prefilter.nearestByTone;
+      const key = `${JSON.stringify(inks)}|${leave}|${byTone}|${JSON.stringify(paper())}`;
+      if (key === sharesKey) return sharesText;
+      const split = inkShares(pic, buildInkSet(inks, leave ? paper() : null), 0, byTone);
+      sharesKey = key;
+      sharesText = split.map((v, i) => `${i < inks.length ? inkName(inks[i]) : 'paper'} ${Math.round(v * 100)}%`).join(' · ');
+      return sharesText;
+    };
+
+    const inkSetSelect = h('select', { class: 'ink-set-select' }) as HTMLSelectElement;
+    inkSetSelect.append(h('option', { value: '' }, 'Load an ink set…'));
+    for (const [key, set] of Object.entries(INK_SETS)) inkSetSelect.append(h('option', { value: key }, set.label));
+    inkSetSelect.addEventListener('change', () => {
+      const set = INK_SETS[inkSetSelect.value];
+      inkSetSelect.value = '';
+      if (set) setColours(set.inks.map((c) => [...c] as RGBA), 'ink-set', { nearestPaper: set.paper != null });
+    });
+
+    return [
+      slider({
+        label: 'Inks', min: 1, max: 8, step: 1, interaction: ia,
+        title: 'How many screens you are willing to print — one layer each',
+        get: () => peers().length,
+        set: (v) => {
+          const n = Math.round(v);
+          const cur = peers();
+          if (n === cur.length) return;
+          if (n < cur.length) return setColours(cur.slice(0, n).map((l) => l.prefilter.ink!), 'ink-count');
+          // Growing adds the colours the picture needs that the group lacks.
+          const pic = this.getSource();
+          const next: RGBA[] = cur.map((l) => l.prefilter.ink!);
+          const found = pic ? extractPalette(pic, n, paper()) : [];
+          for (const c of found) { if (next.length >= n) break; if (!next.some((q) => near(q, c))) next.push(c); }
+          for (const c of found) { if (next.length >= n) break; if (!next.some((q) => same(q, c))) next.push(c); }
+          while (next.length < n) next.push([0, 0, 0, 1]);
+          setColours(next, 'ink-count');
+        },
+      }),
+      paletteControl({
+        label: 'Palette', interaction: ia,
+        get: () => peers().map((l) => (l.prefilter.ink ?? l.color.color) as [number, number, number, number]),
+        set: (v) => {
+          const list = peers();
+          s.batch('palette', () => v.forEach((c, i) => {
+            const l = list[i];
+            if (!l || same(c, l.prefilter.ink ?? l.color.color)) return;
+            s.updateLayerField(l.id, 'prefilter', { ink: c });
+            s.updateLayerField(l.id, 'color', { mode: 'solid', color: c });
+            s.updateLayer(l.id, { name: inkName(c) });
+          }));
+        },
+      }),
+      readout(shares),
+      group('Choosing the inks'),
+      raw(button('Sample the colours', () => resample(peers().length, false, 'extract'), 'sm',
+        'Find the colours the picture is made of. Colours you picked by hand are kept')),
+      raw(button('Posterise the tones', () => resample(peers().length, true, 'posterise'), 'sm',
+        'A dark-to-light ramp from the picture, matched on lightness with hard borders')),
+      raw(button('Pick a colour from the picture', () => this.pickColour((c) => this.addColourLayer(id, c, true)), 'sm',
+        'Tap the picture on a colour the group is missing — a small detail the sampling averaged away. It becomes a layer, and stays when you sample again')),
+      raw(h('div', { class: 'ink-set-row' }, inkSetSelect)),
+      group('How the inks share the picture'),
+      select<'colour' | 'tone'>({
+        label: 'Match on',
+        title: 'Whether a pixel goes to the ink closest in colour, or closest in lightness alone',
+        options: [
+          { value: 'colour', label: 'Colour' },
+          { value: 'tone', label: 'Lightness only' },
+        ],
+        get: () => (first().prefilter.nearestByTone ? 'tone' : 'colour'),
+        set: (v) => setAll({ nearestByTone: v === 'tone' }, 'match-on'),
+      }),
+      slider({
+        label: 'Soft borders', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0.15,
+        title: '0 is a hard edge between inks; higher dithers the pixels near a border between their two closest inks',
+        get: () => first().prefilter.nearestMix ?? 0,
+        set: (v) => setAll({ nearestMix: v }, 'soft-borders'),
+      }),
+      toggle({
+        label: 'Leave paper',
+        title: 'The paper competes as an ink, and where it is closest nothing prints — highlights stay bare stock',
+        get: () => !!first().prefilter.nearestPaper,
+        set: (v) => setAll({ nearestPaper: v }, 'leave-paper'),
+      }),
+    ];
   }
 
   /**
@@ -903,4 +1108,9 @@ function toneSpread(layer: Layer): number {
 /** Two colours equal to within rounding — for recognising a pinned ink in the palette. */
 function same(a: RGBA, b: RGBA): boolean {
   return Math.abs(a[0] - b[0]) < 1e-3 && Math.abs(a[1] - b[1]) < 1e-3 && Math.abs(a[2] - b[2]) < 1e-3;
+}
+
+/** Two colours close enough to count as the same ink when growing a palette. */
+function near(a: RGBA, b: RGBA): boolean {
+  return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 0.12;
 }

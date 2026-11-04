@@ -35,7 +35,7 @@ const LAYER_OWN: Partial<Record<keyof Layer, true | string[]>> = {
   visible: true,
   color: true,
   groupId: true,
-  prefilter: ['channel', 'ink', 'undercolor', 'nearestSet', 'nearestPaperColor'],
+  prefilter: ['channel', 'ink', 'undercolor', 'nearestSet', 'nearestPaperColor', 'nearestPicked'],
   distribution: ['angle', 'seed'],
 };
 
@@ -521,7 +521,32 @@ export class Store {
     return project;
   }
 
+  /**
+   * Run several edits as one undo step — recolouring a whole colour group, or
+   * growing it by three layers, is one thing to the person doing it.
+   */
+  batch(key: string, fn: () => void): void {
+    this.commit(key);
+    this.batching = true;
+    try { fn(); } finally { this.batching = false; }
+  }
+  private batching = false;
+
+  /** Swap one layer for a group of layers in its place, as one undo step. */
+  replaceLayerWithGroup(id: string, layers: Layer[], group: LayerGroup): void {
+    const idx = this.project.layers.findIndex((l) => l.id === id);
+    if (idx < 0) return;
+    this.commit(`to-group:${id}`);
+    this.project.layers.splice(idx, 1, ...layers);
+    this.project.groups = [...(this.project.groups ?? []), group];
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    this.pending.global = worst(this.pending.global, Dirty.All);
+    this.schedule();
+  }
+
   private commit(key: string): void {
+    if (this.batching) return;
     const now = performance.now();
     if (key === this.lastCommitKey && now - this.lastCommitTime < Store.COALESCE_MS) {
       this.lastCommitTime = now;
