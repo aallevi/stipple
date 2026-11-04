@@ -171,8 +171,8 @@ export type Prefilter = {
    *
    * Absent in projects saved before separations existed; treated as `luma`.
    */
-  channel?: 'luma' | 'ink' | 'flat';
-  /** For `ink`: the ink being separated, as it prints. */
+  channel?: 'luma' | 'ink' | 'flat' | 'nearest';
+  /** For `ink`: the ink being separated, as it prints. For `nearest`: this layer's colour. */
   ink?: RGBA;
   /**
    * For `ink`: how much of the neutral component to leave to a black plate.
@@ -180,6 +180,24 @@ export type Prefilter = {
    * which is what keeps total ink coverage printable. 0 is a naive separation.
    */
   undercolor?: number;
+  /**
+   * For `nearest`: how soft the borders between colours are. 0 is a hard edge
+   * (every pixel belongs to exactly one colour); higher shares the pixels near a
+   * border between their two closest colours, so the edge dithers.
+   */
+  nearestMix?: number;
+  /** For `nearest`: dots follow the picture's darkness inside the region (true) or fill it evenly. */
+  nearestTone?: boolean;
+  /** For `nearest`: the paper competes as a colour, and where it wins nothing prints. */
+  nearestPaper?: boolean;
+  /**
+   * For `nearest`, filled in by the engine at render time and never stored: the
+   * colours this layer competes with — every closest-colour layer in its group,
+   * itself included — and the paper. Derived rather than saved so a group can
+   * never disagree with itself about what its colours are.
+   */
+  nearestSet?: RGBA[];
+  nearestPaperColor?: RGBA | null;
 };
 
 export type LayerMask = {
@@ -223,6 +241,8 @@ export type RotationParams = {
 
 export type ColorParams = {
   mode: 'solid' | 'adaptive' | 'image' | 'multicolor' | 'spot';
+  /** `spot`: colours picked from the picture by hand, which re-sampling keeps. */
+  pinned?: RGBA[];
   /** `solid` */
   color: RGBA;
   /** `adaptive`: hue ramp driven by tone. */
@@ -288,6 +308,20 @@ export type Layer = {
   rotation: RotationParams;
   color: ColorParams;
   transform: Transform;
+  /** The group this layer sits in, if any — see `core/groups.ts`. */
+  groupId?: string;
+};
+
+/**
+ * A folder in the layer stack. Its layers are always one unbroken run of the
+ * stack (`tidyGroups` keeps them so), which is what lets a group move, hide and
+ * be edited as one thing. It holds no settings of its own: selecting it edits
+ * its layers together, each keeping what makes it that colour.
+ */
+export type LayerGroup = {
+  id: string;
+  name: string;
+  collapsed: boolean;
 };
 
 export type CanvasSettings = {
@@ -321,4 +355,6 @@ export type Project = {
   canvas: CanvasSettings;
   shapes: ShapeDef[];
   layers: Layer[];   // index 0 renders first (bottom)
+  /** Absent in files saved before groups existed. */
+  groups?: LayerGroup[];
 };

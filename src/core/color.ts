@@ -420,3 +420,64 @@ export function inkShares(
   }
   return seen === 0 ? out : out.map((v) => v / seen);
 }
+
+/**
+ * How much a pixel belongs to one colour of a set — the closest-colour measure.
+ *
+ * Each colour layer in a group asks "is this pixel closest to *me*?", against
+ * every other colour in the group and, optionally, the paper. That makes the
+ * layers a partition: the regions fit together like a puzzle and no two screens
+ * print the same spot, which is what a hand-cut spot-colour separation is.
+ * "Closest" is Oklab distance, the same comparison the spot-ink mode uses, so a
+ * pixel goes to the colour that *looks* nearest rather than the nearest RGB.
+ *
+ * `mix` softens the borders: 0 is a hard edge, and above it the share is a
+ * softmax over distance, so a pixel between two colours is split between them
+ * and the edge dithers instead of stepping. `tone` additionally scales the
+ * share by how dark the pixel is relative to the colour itself, so a region's
+ * shadows carry more dots than its highlights.
+ *
+ * Returns coverage, 0..1. The paper, if given, competes but has no layer: where
+ * it wins, every layer gets nothing.
+ */
+export function nearestShare(
+  pixel: [number, number, number],
+  set: [number, number, number][],
+  own: number,
+  paper: [number, number, number] | null,
+  mix: number,
+  tone: boolean,
+): number {
+  const d = (q: [number, number, number]): number =>
+    (pixel[0] - q[0]) ** 2 + (pixel[1] - q[1]) ** 2 + (pixel[2] - q[2]) ** 2;
+  const dist = set.map(d);
+  if (paper) dist.push(d(paper));
+  if (own < 0 || own >= set.length) return 0;
+
+  let share: number;
+  if (mix <= 0) {
+    let best = 0;
+    for (let i = 1; i < dist.length; i++) if (dist[i] < dist[best]) best = i;
+    share = best === own ? 1 : 0;
+  } else {
+    // Squared Oklab distances between distinct inks run from about 0.005 to 0.3;
+    // this range takes a border from razor-sharp to a wide, soft dither.
+    const sigma = 0.0015 + mix * mix * 0.04;
+    const min = Math.min(...dist);
+    let sum = 0;
+    let mine = 0;
+    for (let i = 0; i < dist.length; i++) {
+      const w = Math.exp(-(dist[i] - min) / sigma);
+      sum += w;
+      if (i === own) mine = w;
+    }
+    share = sum > 0 ? mine / sum : 0;
+  }
+
+  if (tone && share > 0) {
+    // As dark as the colour itself → full coverage; lighter → proportionally less.
+    const room = Math.max(0.05, 1 - set[own][0]);
+    share *= Math.min(1, Math.max(0, (1 - pixel[0]) / room));
+  }
+  return share;
+}

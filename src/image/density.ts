@@ -1,3 +1,4 @@
+import { nearestShare, oklab } from '../core/color';
 import type { Prefilter } from '../core/types';
 
 /** Decoded source pixels. Kept as raw RGBA so workers can transfer it cheaply. */
@@ -46,7 +47,9 @@ export class DensityMap {
 
     // Rec. 709 luma, then gamma — or, for a separation, this layer's ink.
     const invGamma = 1 / Math.max(0.01, f.gamma);
-    const ink = f.channel === 'ink' ? inkProjector(f) : null;
+    const ink = f.channel === 'ink' ? inkProjector(f)
+      : f.channel === 'nearest' ? nearestProjector(f)
+      : null;
     // `flat` reads as tone 0 everywhere, which downstream means "fully inked":
     // an even field of dots, with lightness left entirely to the ink each one
     // takes. Grades still apply on top, so the layer stays adjustable.
@@ -338,4 +341,29 @@ function unsharp(
     out[i] = v < 0 ? 0 : v > 1 ? 1 : v;
   }
   return out;
+}
+
+/**
+ * Coverage of this layer's colour under the closest-colour measure — see
+ * `nearestShare`. The set and the paper arrive on the prefilter, put there by
+ * the engine from the layer's group, so the map is still a pure function of
+ * (source, prefilter) and caches the same way every other channel does.
+ */
+function nearestProjector(f: Prefilter): (r: number, g: number, b: number) => number {
+  const own = f.ink ?? [0, 0, 0, 1];
+  const set = (f.nearestSet?.length ? f.nearestSet : [own]).map((c) => oklab(c[0], c[1], c[2]));
+  const ownLab = oklab(own[0], own[1], own[2]);
+  // The layer's own colour, located in the set by value: two layers can share a
+  // colour, and then they share its region, which is the honest answer.
+  let index = 0;
+  let best = Infinity;
+  set.forEach((c, i) => {
+    const d = (c[0] - ownLab[0]) ** 2 + (c[1] - ownLab[1]) ** 2 + (c[2] - ownLab[2]) ** 2;
+    if (d < best) { best = d; index = i; }
+  });
+  const p = f.nearestPaper && f.nearestPaperColor ? f.nearestPaperColor : null;
+  const paper = p ? oklab(p[0], p[1], p[2]) : null;
+  const mix = Math.max(0, Math.min(1, f.nearestMix ?? 0));
+  const tone = !!f.nearestTone;
+  return (r, g, b) => nearestShare(oklab(r, g, b), set, index, paper, mix, tone);
 }

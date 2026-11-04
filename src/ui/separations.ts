@@ -1,6 +1,7 @@
 import { defaultLayer } from '../core/defaults';
 import { unitPx } from '../core/scale';
 import type { Layer, Project, RGBA } from '../core/types';
+import { inkName } from '../export/plates';
 
 /**
  * Build a printable set of separations from one image.
@@ -175,4 +176,40 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
 function isNeutral(c: RGBA): boolean {
   return Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) < 0.12
     && Math.max(c[0], c[1], c[2]) < 0.35;
+}
+
+/**
+ * One stipple layer per colour, each drawing only the part of the picture that
+ * is closest to its own colour.
+ *
+ * The third way to a set of screens, between the two that already existed.
+ * Spot inks choose a colour per dot but share one layer, so every colour has
+ * the same shape and pattern; ink plates give each ink its own layer but
+ * measure the way process inks overprint, which muddies a palette that was
+ * never meant to mix. Here every layer uses the closest-colour measure against
+ * its siblings, so the regions fit together without overlapping and each one is
+ * a layer of its own — shape, size, density and screen free to differ.
+ *
+ * `colours` are the inks, picked or found; the caller puts the result in a group,
+ * which is what gives the layers their set of competitors.
+ */
+export function buildColourLayers(colours: RGBA[], groupId: string): Layer[] {
+  return colours.map((c, i) => {
+    const layer = defaultLayer(inkName(c), 'jittered');
+    layer.groupId = groupId;
+    layer.blend = 'multiply';
+    layer.prefilter = {
+      ...layer.prefilter,
+      channel: 'nearest',
+      ink: c,
+      nearestMix: 0.15,
+      nearestTone: false,
+      nearestPaper: true,
+    };
+    layer.color = { ...layer.color, mode: 'solid', color: c };
+    // Different seeds, or neighbouring regions would put their dots on the
+    // same lattice and the borders would read as seams.
+    layer.distribution = { ...layer.distribution, seed: 1 + i * 137 } as Layer['distribution'];
+    return layer;
+  });
 }

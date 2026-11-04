@@ -243,6 +243,31 @@ export class Engine {
     return `${this.sourceId}|${layer.input}|${res}|${JSON.stringify(layer.prefilter)}`;
   }
 
+  /**
+   * A closest-colour layer competes with every closest-colour layer in its
+   * group, so what it measures depends on its siblings: give one a new colour
+   * and the borders of all the others move. Working the set out here, each
+   * render, and putting it on the prefilter means the density key changes for
+   * every sibling the moment one changes — nothing has to remember to tell them.
+   */
+  private withCompetitors(layer: Layer, project: Project): Layer {
+    if (layer.prefilter.channel !== 'nearest') return layer;
+    const own = layer.prefilter.ink ?? layer.color.color;
+    const peers = layer.groupId
+      ? project.layers.filter((l) => l.groupId === layer.groupId && l.prefilter.channel === 'nearest')
+      : [layer];
+    const nearestSet = peers.map((l) => l.prefilter.ink ?? l.color.color);
+    return {
+      ...layer,
+      prefilter: {
+        ...layer.prefilter,
+        ink: own,
+        nearestSet,
+        nearestPaperColor: layer.prefilter.nearestPaper ? project.canvas.background : null,
+      },
+    };
+  }
+
   private pointsKeyFor(layer: Layer, canvasW: number, canvasH: number, quality: number): string {
     // A halftone screen sizes its cell from the document DPI, so DPI is one of
     // its inputs and belongs in its key. No other algorithm reads it, and making
@@ -284,7 +309,7 @@ export class Engine {
 
     for (const raw of project.layers) {
       if (!raw.visible || raw.opacity <= 0) continue;
-      const layer = resolveLayer(raw, unit);
+      const layer = this.withCompetitors(resolveLayer(raw, unit), project);
       const cache = this.cacheFor(layer.id);
 
       // A `below` layer reads the composite underneath it, so its density has to

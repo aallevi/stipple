@@ -1,87 +1,82 @@
+import { extractPalette } from '../core/color';
 import { defaultLayer, uid } from '../core/defaults';
+import { groupMembers, groupSpan } from '../core/groups';
 import type { Store } from '../core/store';
-import type { Layer } from '../core/types';
+import type { Layer, LayerGroup } from '../core/types';
+import type { ImageSource } from '../image/density';
 import { button, h } from './controls';
-import { buildSeparation, SEPARATIONS } from './separations';
+import { buildColourLayers, buildSeparation, SEPARATIONS } from './separations';
 
 const RESTORE = '__restore';
+const FROM_PICTURE = 'picture:';
 
 /**
- * The layer stack.
+ * The layer stack, with groups.
  *
  * Rendered top-first, the way every compositing tool shows it, while the project
  * stores bottom-first — the index flip lives here so nothing else has to think
- * about it. `slotToIndex` is that flip, and it is the only place the two orders
- * are allowed to meet.
+ * about it.
+ *
+ * A group is a folder row above its layers. Selecting the folder edits all of
+ * its layers at once (the store fans the edit out, sparing what makes each one
+ * that colour); selecting a layer inside edits only that layer. That is the
+ * whole of "edit together or alone" — there is no separate switch for it.
  */
 export class LayersPanel {
   readonly el = h('div', { class: 'layers' });
   private list = h('div', { class: 'layer-list' });
   /** The line showing where a dragged row would land. */
   private marker = h('div', { class: 'layer-drop-marker' });
+  /** The layer the inspector shows. With a group selected, its top layer. */
   selected: string | null = null;
+  /** The selected group, when it is the folder rather than a layer that is selected. */
+  selectedGroup: string | null = null;
+  /** Says, while a group is selected, that edits reach all of it. */
+  private groupNote = h('p', { class: 'link-note', hidden: '' });
   /**
-   * The stack as it was before the first separation, so there is a way back
-   * that does not depend on undo. Undo gets there too, but only by also
-   * unwinding every edit made to the plates since — and nothing on screen
-   * says it would work at all.
+   * The stack as it was before the first split, so there is a way back that
+   * does not depend on undo. Undo gets there too, but only by also unwinding
+   * every edit made since — and nothing on screen says it would work at all.
    */
-  private beforeSeparation: Layer[] | null = null;
+  private beforeSeparation: { layers: Layer[]; groups: LayerGroup[] } | null = null;
   private refreshSeparateMenu: () => void = () => {};
 
-  constructor(private store: Store, private onSelect: (id: string) => void) {
+  constructor(
+    private store: Store,
+    private onSelect: (id: string) => void,
+    /** The photograph, for finding the colours a picture is made of. */
+    private getSource: () => ImageSource | null = () => null,
+  ) {
     this.el.append(
       h('div', { class: 'panel-head' },
         h('span', {}, 'Layers'),
         h('div', { class: 'panel-actions' },
-          button('↑', () => this.nudge(1), 'icon', 'Move the selected layer up the stack (⌘])'),
-          button('↓', () => this.nudge(-1), 'icon', 'Move the selected layer down the stack (⌘[)'),
+          button('↑', () => this.nudge(1), 'icon', 'Move the selected layer or group up the stack (⌘])'),
+          button('↓', () => this.nudge(-1), 'icon', 'Move the selected layer or group down the stack (⌘[)'),
           button('+', () => this.add(), 'icon', 'Add a layer'),
-          button('⧉', () => this.duplicate(), 'icon', 'Duplicate the selected layer'),
-          button('−', () => this.remove(), 'icon', 'Delete the selected layer'),
+          button('⧉', () => this.duplicate(), 'icon', 'Duplicate the selected layer or group'),
+          button('−', () => this.remove(), 'icon', 'Delete the selected layer or group'),
         ),
       ),
       this.separateMenu(),
       this.list,
-      this.linkRow,
+      h('div', { class: 'link-row' }, this.groupNote),
     );
     this.list.append(this.marker);
-    this.linkToggle.addEventListener('change', () => this.setLinked(this.linkToggle.checked));
   }
 
   /**
-   * "Change all layers together", and the line that says what that spares.
-   * Only shown with more than one layer, where it can mean anything.
-   */
-  private linkToggle = h('input', { type: 'checkbox', class: 'switch-input' }) as HTMLInputElement;
-  private linkNote = h('p', { class: 'link-note' });
-  private linkRow = h('div', { class: 'link-row' },
-    h('label', { class: 'ctl ctl-toggle', title: 'Edits to the selected layer go to every layer' },
-      h('span', { class: 'ctl-label' }, 'Change all layers together'),
-      h('span', { class: 'switch' }, this.linkToggle, h('span', { class: 'switch-track' })),
-    ),
-    this.linkNote,
-  );
-
-  setLinked(on: boolean): void {
-    this.store.linked = on;
-    this.renderLink();
-  }
-
-  private renderLink(): void {
-    const n = this.store.get().layers.length;
-    this.linkRow.hidden = n < 2;
-    this.linkToggle.checked = this.store.linked;
-    this.linkNote.hidden = !this.store.linked;
-    this.linkNote.textContent = `Every edit below changes all ${n} layers \u2014 except each `
-      + 'layer\u2019s own ink, colour, screen angle and seed, which are what make it that plate.';
-  }
-
-  /**
-   * Move the selected layer one place through the stack. `+1` is up — towards
-   * the top of the panel, which is the *end* of the project array.
+   * Move the selection one place through the stack. `+1` is up — towards the
+   * top of the panel, which is the *end* of the project array. A layer stepping
+   * into a group joins it and stepping out leaves it; a group steps past the
+   * whole layer or group next to it.
    */
   nudge(delta: number): void {
+    if (this.selectedGroup) {
+      this.store.nudgeGroup(this.selectedGroup, delta);
+      this.render();
+      return;
+    }
     const layers = this.store.get().layers;
     const from = layers.findIndex((l) => l.id === this.selected);
     if (from < 0) return;
@@ -94,23 +89,12 @@ export class LayersPanel {
   }
 
   /**
-   * The project index an insertion slot in the *displayed* list refers to.
+   * Replace the stack with one layer per ink, in a group.
    *
-   * Slot `k` means "above the k-th row from the top". The panel runs top-first
-   * and the project bottom-first, so the two count in opposite directions and
-   * the flip is a subtraction.
-   */
-  private slotToIndex(slot: number, count: number): number {
-    return count - slot;
-  }
-
-  /**
-   * Replace the stack with one layer per ink.
-   *
-   * This is a whole-stack operation rather than a per-layer setting because a
+   * A whole-stack operation rather than a per-layer setting, because a
    * separation only means anything as a set: the plates have to agree on their
-   * screen angles and on which one carries the neutrals, and choosing that ink
-   * by ink is how you end up with a moiré.
+   * screen angles, and the colours of a picture have to agree on who owns which
+   * part of it.
    */
   private separateMenu(): HTMLElement {
     const sel = h('select', { class: 'separate-select' }) as HTMLSelectElement;
@@ -118,11 +102,13 @@ export class LayersPanel {
       sel.replaceChildren(h('option', { value: '' }, 'Split into ink plates…'));
       if (this.beforeSeparation) {
         sel.append(h('option', { value: RESTORE },
-          `↩ Back to the ${this.beforeSeparation.length}-layer stack from before`));
+          `↩ Back to the ${this.beforeSeparation.layers.length}-layer stack from before`));
       }
-      for (const [key, kind] of Object.entries(SEPARATIONS)) {
-        sel.append(h('option', { value: key }, kind.label));
-      }
+      const picture = h('optgroup', { label: 'Stipple, one layer per colour of the picture' });
+      for (let n = 2; n <= 8; n++) picture.append(h('option', { value: `${FROM_PICTURE}${n}` }, `From the picture · ${n} colours`));
+      const plates = h('optgroup', { label: 'Halftone plates, overprinting' });
+      for (const [key, kind] of Object.entries(SEPARATIONS)) plates.append(h('option', { value: key }, kind.label));
+      sel.append(picture, plates);
     };
     this.refreshSeparateMenu = options;
     options();
@@ -130,38 +116,52 @@ export class LayersPanel {
     sel.addEventListener('change', () => {
       const choice = sel.value;
       sel.value = '';
+      const project = this.store.get();
       if (choice === RESTORE) {
         if (!this.beforeSeparation) return;
-        this.store.replaceLayers(this.beforeSeparation);
+        this.store.replaceLayers(this.beforeSeparation.layers, this.beforeSeparation.groups);
         this.beforeSeparation = null;
-        this.store.linked = false;
+        options();
+        this.render();
+        this.select(this.store.get().layers[this.store.get().layers.length - 1].id);
+        return;
+      }
+
+      const group: LayerGroup = { id: uid('group'), name: '', collapsed: false };
+      let layers: Layer[];
+      if (choice.startsWith(FROM_PICTURE)) {
+        const src = this.getSource();
+        const n = Number(choice.slice(FROM_PICTURE.length));
+        const paper = project.canvas.background;
+        const colours = src ? extractPalette(src, n, paper) : [];
+        if (!colours.length) return;
+        group.name = 'Picture colours';
+        layers = buildColourLayers(colours, group.id);
       } else {
         const kind = SEPARATIONS[choice];
         if (!kind) return;
-        const project = this.store.get();
-        // Keep the first stack only: separating CMYK and then trying duotone
-        // should still lead back to the picture you started from, not to the
-        // CMYK plates.
-        if (!this.beforeSeparation) this.beforeSeparation = structuredClone(project.layers);
-        this.store.replaceLayers(buildSeparation(kind, project.canvas));
-        // Plates are edited as a set — one dot size, one lineature — so the set
-        // starts linked. The note under the stack says so, and one switch undoes it.
-        this.store.linked = true;
+        group.name = kind.label.replace(/\s*\(.*\)$/, '');
+        layers = buildSeparation(kind, project.canvas).map((l) => ({ ...l, groupId: group.id }));
       }
+      // Keep the first stack only: splitting into CMYK and then trying the
+      // picture's colours should still lead back to where you started.
+      if (!this.beforeSeparation) {
+        this.beforeSeparation = { layers: structuredClone(project.layers), groups: structuredClone(project.groups ?? []) };
+      }
+      this.store.replaceLayers(layers, [group]);
       options();
-      this.render();
-      this.select(this.store.get().layers[this.store.get().layers.length - 1].id);
+      // A set is edited as a set to begin with: select the group.
+      this.selectGroup(group.id);
     });
     return h('div', { class: 'separate-row' }, sel);
   }
 
   /**
-   * Drop the remembered pre-separation stack, for when the document is replaced
+   * Drop the remembered pre-split stack, for when the document is replaced
    * wholesale (a preset, a loaded project) and that stack no longer belongs to it.
    */
   forgetSeparation(): void {
     this.beforeSeparation = null;
-    this.store.linked = false;
     this.refreshSeparateMenu();
   }
 
@@ -173,21 +173,39 @@ export class LayersPanel {
   }
 
   duplicate(): void {
+    const project = this.store.get();
+    if (this.selectedGroup) {
+      const span = groupSpan(project, this.selectedGroup);
+      const g = this.store.group(this.selectedGroup);
+      if (!span || !g) return;
+      const copy: LayerGroup = { id: uid('group'), name: `${g.name} copy`, collapsed: false };
+      const layers = groupMembers(project, g.id).map((l) => ({ ...clone(l), id: uid('layer'), groupId: copy.id }));
+      const next = [...project.layers.slice(0, span[1] + 1), ...layers, ...project.layers.slice(span[1] + 1)];
+      this.store.replaceLayers(next, [...(project.groups ?? []), copy]);
+      this.selectGroup(copy.id);
+      return;
+    }
     if (!this.selected) return;
     const src = this.store.layer(this.selected);
     if (!src) return;
-    // Structured clone keeps nested params independent; a shallow copy would
-    // leave the two layers sharing prefilter and colour objects.
-    const copy: Layer = { ...JSON.parse(JSON.stringify(src)), id: uid('layer'), name: `${src.name} copy` };
-    const idx = this.store.get().layers.findIndex((l) => l.id === src.id);
+    const copy: Layer = { ...clone(src), id: uid('layer'), name: `${src.name} copy` };
+    const idx = project.layers.findIndex((l) => l.id === src.id);
     this.store.addLayer(copy, idx + 1);
     this.select(copy.id);
   }
 
   remove(): void {
-    if (!this.selected) return;
     const layers = this.store.get().layers;
-    if (layers.length <= 1) return;
+    if (this.selectedGroup) {
+      const g = this.store.group(this.selectedGroup);
+      const n = groupMembers(this.store.get(), this.selectedGroup).length;
+      if (!g || n >= layers.length) return;
+      if (!confirm(`Delete the group “${g.name}” and its ${n} layers?`)) return;
+      this.store.removeGroup(g.id);
+      this.select(this.store.get().layers[this.store.get().layers.length - 1]?.id ?? null);
+      return;
+    }
+    if (!this.selected || layers.length <= 1) return;
     const idx = layers.findIndex((l) => l.id === this.selected);
     this.store.removeLayer(this.selected);
     const next = this.store.get().layers[Math.min(idx, this.store.get().layers.length - 1)];
@@ -196,53 +214,161 @@ export class LayersPanel {
 
   select(id: string | null): void {
     this.selected = id;
+    this.selectedGroup = null;
+    this.store.scope = null;
     if (id) this.onSelect(id);
     this.render();
   }
 
+  /**
+   * Select a group as a whole. The inspector shows its top layer, and every
+   * edit made there reaches all of the group's layers.
+   */
+  selectGroup(id: string): void {
+    const members = groupMembers(this.store.get(), id);
+    if (!members.length) return this.select(null);
+    this.selectedGroup = id;
+    this.selected = members[members.length - 1].id;
+    this.store.scope = members.map((l) => l.id);
+    this.onSelect(this.selected);
+    this.render();
+  }
+
   render(): void {
-    const layers = this.store.get().layers;
-    this.renderLink();
+    const project = this.store.get();
+    const layers = project.layers;
+
+    // Keep the selection meaningful across undo, deletes and moves.
+    if (this.selectedGroup && !groupMembers(project, this.selectedGroup).length) this.selectedGroup = null;
+    if (this.selectedGroup) {
+      const members = groupMembers(project, this.selectedGroup);
+      this.store.scope = members.map((l) => l.id);
+      if (!members.some((l) => l.id === this.selected)) {
+        this.selected = members[members.length - 1].id;
+        this.onSelect(this.selected);
+      }
+    } else {
+      this.store.scope = null;
+    }
     if (this.selected && !layers.some((l) => l.id === this.selected)) {
       this.selected = layers[layers.length - 1]?.id ?? null;
       if (this.selected) this.onSelect(this.selected);
     }
 
-    const rows = [...layers].reverse().map((layer) => {
-      const visible = h('button', {
-        class: `vis${layer.visible ? '' : ' off'}`,
-        type: 'button',
-        title: layer.visible ? 'Hide layer' : 'Show layer',
-      }, layer.visible ? '●' : '○');
-      visible.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.store.updateLayer(layer.id, { visible: !layer.visible });
-        this.render();
-      });
+    const g = this.selectedGroup ? this.store.group(this.selectedGroup) : undefined;
+    this.groupNote.hidden = !g;
+    this.groupNote.parentElement?.toggleAttribute('hidden', !g);
+    if (g) {
+      const n = groupMembers(project, g.id).length;
+      this.groupNote.textContent = `Editing all ${n} layers of “${g.name}” together — each keeps its own `
+        + 'colour, screen angle and seed. Select one layer to change it alone.';
+    }
 
-      const name = h('input', { class: 'layer-name', value: layer.name }) as HTMLInputElement;
-      name.value = layer.name;
-      name.addEventListener('change', () => this.store.updateLayer(layer.id, { name: name.value }));
-      name.addEventListener('click', (e) => e.stopPropagation());
-
-      const row = h('div', {
-        class: `layer-row${layer.id === this.selected ? ' selected' : ''}`,
-        'data-id': layer.id,
-      },
-        h('span', { class: 'layer-grip', title: 'Drag to reorder' }, '⠿'),
-        visible,
-        name,
-        h('span', { class: 'layer-meta' },
-          `${algoLabel(layer.distribution.algo)}${layer.input === 'below' ? ' · below' : ''}`),
-      );
-      row.addEventListener('click', () => this.select(layer.id));
-      row.addEventListener('pointerdown', (e) => this.beginDrag(e, layer.id, row));
-
-      return row;
-    });
+    const rows: HTMLElement[] = [];
+    const headed = new Set<string>();
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const layer = layers[i];
+      const group = layer.groupId ? this.store.group(layer.groupId) : undefined;
+      if (group && !headed.has(group.id)) {
+        headed.add(group.id);
+        rows.push(this.groupRow(group));
+      }
+      if (group?.collapsed) continue;
+      rows.push(this.layerRow(layer, i, !!group));
+    }
 
     this.list.replaceChildren(...rows, this.marker);
     this.marker.style.display = 'none';
+  }
+
+  private groupRow(group: LayerGroup): HTMLElement {
+    const project = this.store.get();
+    const members = groupMembers(project, group.id);
+    const anyVisible = members.some((l) => l.visible);
+    const span = groupSpan(project, group.id)!;
+
+    const fold = h('button', {
+      class: `group-fold${group.collapsed ? ' folded' : ''}`, type: 'button',
+      title: group.collapsed ? 'Show the layers in this group' : 'Fold the group',
+    });
+    fold.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.store.updateGroup(group.id, { collapsed: !group.collapsed });
+      this.render();
+    });
+
+    const visible = h('button', {
+      class: `vis${anyVisible ? '' : ' off'}`, type: 'button',
+      title: anyVisible ? 'Hide the group' : 'Show the group',
+    }, anyVisible ? '●' : '○');
+    visible.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.store.setGroupVisible(group.id, !anyVisible);
+      this.render();
+    });
+
+    const name = h('input', { class: 'layer-name' }) as HTMLInputElement;
+    name.value = group.name;
+    name.addEventListener('change', () => this.store.updateGroup(group.id, { name: name.value }));
+    name.addEventListener('click', (e) => e.stopPropagation());
+
+    const ungroup = h('button', { class: 'group-ungroup', type: 'button', title: 'Ungroup — keep the layers, drop the folder' }, '⇱');
+    ungroup.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.store.ungroup(group.id);
+      this.select(this.selected);
+    });
+
+    const row = h('div', {
+      class: `layer-row group-row${this.selectedGroup === group.id ? ' selected' : ''}`,
+      'data-top': String(span[1]), 'data-bottom': String(span[0]), 'data-group': group.id,
+    },
+      h('span', { class: 'layer-grip', title: 'Drag to move the whole group' }, '⠿'),
+      h('span', { class: 'group-lead' }, fold, visible),
+      name,
+      h('span', { class: 'layer-meta' }, `${members.length} layers`, ungroup),
+    );
+    row.addEventListener('click', () => this.selectGroup(group.id));
+    row.addEventListener('pointerdown', (e) => this.beginDrag(e, row, { group: group.id }));
+    return row;
+  }
+
+  private layerRow(layer: Layer, index: number, inGroup: boolean): HTMLElement {
+    const visible = h('button', {
+      class: `vis${layer.visible ? '' : ' off'}`,
+      type: 'button',
+      title: layer.visible ? 'Hide layer' : 'Show layer',
+    }, layer.visible ? '●' : '○');
+    visible.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.store.updateLayer(layer.id, { visible: !layer.visible });
+      this.render();
+    });
+
+    const name = h('input', { class: 'layer-name' }) as HTMLInputElement;
+    name.value = layer.name;
+    name.addEventListener('change', () => this.store.updateLayer(layer.id, { name: name.value }));
+    name.addEventListener('click', (e) => e.stopPropagation());
+
+    // A colour layer shows its colour, so a group of them reads as a palette.
+    const chip = layer.color.mode === 'solid'
+      ? h('span', { class: 'layer-chip', style: `background: ${css(layer.color.color)}` })
+      : null;
+
+    const selected = layer.id === this.selected && !this.selectedGroup;
+    const row = h('div', {
+      class: `layer-row${inGroup ? ' in-group' : ''}${selected ? ' selected' : ''}`,
+      'data-top': String(index), 'data-bottom': String(index), 'data-group-of': layer.groupId ?? '',
+    },
+      h('span', { class: 'layer-grip', title: 'Drag to reorder' }, '⠿'),
+      visible,
+      name,
+      h('span', { class: 'layer-meta' }, ...(chip ? [chip] : []),
+        `${algoLabel(layer.distribution.algo)}${layer.input === 'below' ? ' · below' : ''}`),
+    );
+    row.addEventListener('click', () => this.select(layer.id));
+    row.addEventListener('pointerdown', (e) => this.beginDrag(e, row, { layer: layer.id }));
+    return row;
   }
 
   /**
@@ -250,12 +376,10 @@ export class LayersPanel {
    *
    * The `dragstart`/`drop` pair this replaces never fired in the desktop app at
    * all: the macOS webview hands drag gestures to the native file-drop handler
-   * before the page sees them, so the rows were draggable in a browser tab and
-   * inert in the shipped build — which is where the stack is actually used.
-   * Pointer events have no such owner, so this works in both, and it can show a
-   * real insertion line instead of highlighting a row and hoping.
+   * before the page sees them. Pointer events have no such owner, so this works
+   * in both, and it can show a real insertion line instead of highlighting a row.
    */
-  private beginDrag(e: PointerEvent, id: string, row: HTMLElement): void {
+  private beginDrag(e: PointerEvent, row: HTMLElement, what: { layer?: string; group?: string }): void {
     // The name field has to keep its own click-to-edit and drag-to-select.
     if ((e.target as HTMLElement).closest('input, button')) return;
     if (e.button !== 0) return;
@@ -285,15 +409,42 @@ export class LayersPanel {
       row.releasePointerCapture?.(ev.pointerId);
       row.classList.remove('dragging');
       this.marker.style.display = 'none';
-      if (slot >= 0) {
-        this.store.moveLayer(id, this.slotToIndex(slot, this.store.get().layers.length));
-        this.select(id);
+      if (slot < 0) return;
+      const drop = this.dropAt(slot);
+      if (what.group) {
+        this.store.moveGroup(what.group, drop.index);
+        this.selectGroup(what.group);
+      } else if (what.layer) {
+        this.store.moveLayer(what.layer, drop.index, drop.into);
+        this.select(what.layer);
       }
     };
 
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
+  }
+
+  /**
+   * What dropping into a displayed slot means for the stack.
+   *
+   * Slot `k` is "above the k-th row from the top". Each row carries the project
+   * indices it spans — a single layer, or a whole group for a folder row — so
+   * above a row means just after its topmost layer, and below the last row
+   * means just before its bottommost. The one slot that needs saying out loud
+   * is directly under an open folder's row: that is the top of the group, and
+   * a layer dropped there joins it.
+   */
+  private dropAt(slot: number): { index: number; into?: string } {
+    const rows = [...this.list.querySelectorAll<HTMLElement>('.layer-row')];
+    if (!rows.length) return { index: 0 };
+    if (slot >= rows.length) return { index: Number(rows[rows.length - 1].dataset.bottom) };
+    const row = rows[slot];
+    const prev = rows[slot - 1];
+    if (prev?.dataset.group && row.dataset.groupOf === prev.dataset.group) {
+      return { index: Number(row.dataset.top) + 1, into: prev.dataset.group };
+    }
+    return { index: Number(row.dataset.top) + 1 };
   }
 
   /** Which insertion slot a pointer at `clientY` is nearest. */
@@ -316,6 +467,16 @@ export class LayersPanel {
     this.marker.style.display = 'block';
     this.marker.style.top = `${edge - listBox.top + this.list.scrollTop}px`;
   }
+}
+
+function clone<T>(v: T): T {
+  // Structured clone keeps nested params independent; a shallow copy would
+  // leave two layers sharing prefilter and colour objects.
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
+function css(c: [number, number, number, number]): string {
+  return `rgb(${Math.round(c[0] * 255)}, ${Math.round(c[1] * 255)}, ${Math.round(c[2] * 255)})`;
 }
 
 function algoLabel(algo: string): string {

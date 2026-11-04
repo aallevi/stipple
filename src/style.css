@@ -438,6 +438,58 @@ select:hover { background: var(--hover); }
 }
 .link-note[hidden] { display: none; }
 
+/* Groups: a folder row, and its layers indented under it. */
+.group-row { background: var(--panel-2); border-color: var(--line); font-weight: 600; }
+.group-row:hover { background: #b3b3b3; }
+.group-row.selected { background: var(--field); }
+.group-lead { display: flex; align-items: center; gap: 3px; }
+.layer-row.group-row { grid-template-columns: 12px auto 1fr auto; }
+.group-fold {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  position: relative;
+}
+.group-fold::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--text-dim);
+}
+.group-fold.folded::after {
+  left: 4px;
+  top: 3px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--text-dim);
+  border-right: 0;
+}
+.group-ungroup {
+  margin-left: 6px;
+  padding: 0 3px;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11px;
+}
+.group-ungroup:hover { color: var(--text); }
+.layer-row.in-group { margin-left: 14px; }
+.layer-row.in-group + .group-row,
+.layer-row.in-group + .layer-row:not(.in-group) { margin-top: 3px; }
+.group-row + .layer-row:not(.in-group) { margin-top: -1px; }
+.layer-meta { display: inline-flex; align-items: center; gap: 5px; }
+.layer-chip { width: 10px; height: 10px; border: 1px solid var(--line); display: inline-block; }
+
+/* The eyedropper is armed. */
+.viewport.picking { cursor: crosshair; }
+
 /* -- sections ------------------------------------------------------------ */
 
 .section { border-bottom: 1px solid var(--line); }
@@ -805,6 +857,13 @@ input[type='range']::-moz-range-thumb {
 }
 .section-info[hidden] { display: none; }
 
+/* An ⓘ on a single control: the label shrinks to make room, the note opens under the row. */
+.ctl-label-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.ctl-label-wrap .ctl-label { min-width: 0; }
+.ctl-label-wrap .info-btn { flex: 0 0 auto; width: 14px; height: 14px; font-size: 9px; }
+.ctl-stack > .ctl-info { margin-top: 6px; }
+.ctl-stack > .ctl-info[hidden] { display: none; }
+
 /* -- document size ------------------------------------------------------- */
 
 .size-block { display: flex; align-items: stretch; gap: 4px; }
@@ -937,6 +996,11 @@ input[type='range']::-moz-range-thumb {
   .export-select { display: block; width: 108px; }
   .export-buttons { display: none; }
   .info-btn { width: 26px; height: 26px; font-size: 14px; }
+  .ctl-label-wrap .info-btn { width: 22px; height: 22px; font-size: 12px; }
+  .group-fold { width: 26px; height: 26px; }
+  .group-fold::after { left: 9px; top: 10px; }
+  .group-fold.folded::after { left: 10px; top: 9px; }
+  .group-ungroup { font-size: 16px; padding: 4px 6px; }
   .size-field .num { font-size: 16px; padding: 4px 6px; }
   .size-lock { flex-basis: 30px; }
 

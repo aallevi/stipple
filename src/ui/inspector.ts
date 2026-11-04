@@ -1,10 +1,10 @@
 import { buildInkSet, extractPalette, inkShares, toneRamp } from '../core/color';
-import { defaultDistribution, defaultRotation, defaultSize } from '../core/defaults';
+import { defaultDistribution, defaultRotation, defaultSize, uid } from '../core/defaults';
 import { unitPx } from '../core/scale';
 import type { Store } from '../core/store';
 import {
   BLEND_MODES, type BlendMode, type DistributionAlgo, type HalftoneParams,
-  type JitteredParams, type Layer, type VoronoiParams,
+  type JitteredParams, type Layer, type RGBA, type VoronoiParams,
 } from '../core/types';
 import {
   button, colorControl, group, h, hint, paletteControl, raw, rangeControl, readout, section,
@@ -55,6 +55,12 @@ export class Inspector {
     private voronoiAvailable: boolean,
     /** The photograph, for proposing a palette from what is actually in it. */
     private getSource: () => { width: number; height: number; rgba: Uint8ClampedArray } | null = () => null,
+    /**
+     * Arm the canvas eyedropper: the next tap on the picture samples the photo
+     * there and hands the colour back. For the colours automatic sampling
+     * averages away — a small red detail in a mostly brown picture.
+     */
+    private pickColour: (done: (c: RGBA) => void) => void = () => {},
   ) {}
 
   /** Rebuild if the layer identity or an option that changes the form did. */
@@ -151,12 +157,13 @@ export class Inspector {
       ], true),
 
       section('Measure', [
-        select<'luma' | 'ink' | 'flat'>({
+        select<'luma' | 'ink' | 'flat' | 'nearest'>({
           label: 'Responds to',
-          title: 'Overall tone, the coverage of one ink, or nothing at all',
+          title: 'Overall tone, the coverage of one ink, the closest colour, or nothing at all',
           options: [
             { value: 'luma', label: 'Overall tone' },
             { value: 'ink', label: 'One ink (makes this layer a plate)' },
+            { value: 'nearest', label: 'Closest colour (one region of a colour group)' },
             { value: 'flat', label: 'Nothing (even dots)' },
           ],
           get: () => L().prefilter.channel ?? 'luma',
@@ -179,11 +186,11 @@ export class Inspector {
             const c = L().prefilter.ink ?? [0, 0, 0, 1];
             s.editLayerField(id, 'color', { mode: 'solid', color: c });
           }, 'sm wide')),
-        ] : layer.prefilter.channel === 'flat' ? [
+        ] : layer.prefilter.channel === 'nearest' ? this.nearestControls(id) : layer.prefilter.channel === 'flat' ? [
           hint('Dots land evenly everywhere. Lightness comes from the ink each one takes, '
             + 'which is what a spot-ink layer wants.'),
         ] : [hint('This layer reads overall tone. Switch to an ink to make it one plate of a separation.')]),
-      ], layer.prefilter.channel !== 'ink', [], 'What this layer responds to in what it reads. Overall tone puts dots where it is dark. One ink puts dots where the picture needs that particular ink, which makes the layer one plate of a separation. Nothing spreads dots evenly and leaves the colour choice to the Colour section. This decides where dots go, not what colour they print.'),
+      ], layer.prefilter.channel !== 'ink' && layer.prefilter.channel !== 'nearest', [], 'What this layer responds to in what it reads, which decides where its dots go. Overall tone: dots where it is dark. One ink: dots where the picture needs that ink, as one plate of an overprinting separation. Closest colour: dots only where the picture is closer to this layer\u2019s colour than to any other colour in its group, so the colours of a group fit together like a puzzle and never print on top of each other. Nothing: dots evenly everywhere.'),
 
       section('Tone mask', [
         rangeControl({
@@ -233,6 +240,10 @@ export class Inspector {
         slider({
           label: 'Tone spread', min: 0, max: 1, step: 0.01, interaction: ia, reset: 1,
           title: 'How much smaller the quiet end of the range gets. 0 draws every mark at Size',
+          info: 'How much the dots shrink in the light parts. At 0 every dot is the full Size, so '
+            + 'only the number of dots carries the picture. At 1 dots in the lightest parts shrink '
+            + 'to nothing, so size carries it too. The line underneath shows the smallest and '
+            + 'largest dot you get.',
           get: () => toneSpread(L()),
           set: (v) => {
             const max = L().size.max;
@@ -248,6 +259,10 @@ export class Inspector {
         }),
         slider({
           label: 'Tone response', min: 0.3, max: 2, step: 0.05, interaction: ia, reset: 1,
+          info: 'The curve between the small and the large dots. At 1 a dot\u2019s width follows '
+            + 'the darkness evenly, which looks right for a drawing. At 0.5 its area does instead, '
+            + 'which is what a halftone needs so a 50% grey prints as 50% ink. Below that the '
+            + 'mid-tones get heavier, above it lighter.',
           title: '1 makes the mark\u2019s width track tone, which suits a drawing. '
             + '0.5 makes its area track tone, which is what a halftone needs to print '
             + 'a 50% grey as 50% grey',
@@ -347,6 +362,89 @@ export class Inspector {
 
     this.controls = sections;
     this.el.replaceChildren(...sections.map((c) => c.el));
+  }
+
+  /**
+   * Closest-colour measuring: this layer's colour, the softness of its borders,
+   * what happens inside its region, and a way to add a colour the automatic
+   * sampling missed. Its competitors are its group — see `Engine.withCompetitors`.
+   */
+  private nearestControls(id: string): Control[] {
+    const s = this.store;
+    const ia = this.interaction;
+    const L = (): Layer => s.layer(id)!;
+    const peers = (): Layer[] => {
+      const g = L().groupId;
+      return g ? s.get().layers.filter((l) => l.groupId === g && l.prefilter.channel === 'nearest') : [L()];
+    };
+    return [
+      colorControl({
+        label: 'This colour', interaction: ia,
+        // Owned and printed are one colour here; changing one changes both.
+        get: () => L().prefilter.ink ?? L().color.color,
+        set: (v) => {
+          s.updateLayerField(id, 'prefilter', { ink: v }, `nearest-colour:${id}`);
+          s.updateLayerField(id, 'color', { mode: 'solid', color: v }, `nearest-colour:${id}`);
+        },
+      }),
+      readout(() => {
+        const n = peers().length;
+        return n > 1 ? `Shares the picture with ${n - 1} other colour${n > 2 ? 's' : ''} in its group`
+          : 'Alone: put it in a group with other colours, or pick one below';
+      }),
+      slider({
+        label: 'Soft borders', min: 0, max: 1, step: 0.01, interaction: ia, reset: 0.15,
+        title: '0 is a hard edge between colours; higher dithers the pixels near a border between their two closest colours',
+        get: () => L().prefilter.nearestMix ?? 0,
+        set: (v) => s.editLayerField(id, 'prefilter', { nearestMix: v }),
+      }),
+      select<'even' | 'tone'>({
+        label: 'Inside the region',
+        title: 'Fill a colour\u2019s region evenly, like a flat screenprint, or put more dots where it is darker',
+        options: [
+          { value: 'even', label: 'Even fill' },
+          { value: 'tone', label: 'Follows the darkness' },
+        ],
+        get: () => (L().prefilter.nearestTone ? 'tone' : 'even'),
+        set: (v) => s.editLayerField(id, 'prefilter', { nearestTone: v === 'tone' }),
+      }),
+      toggle({
+        label: 'Leave paper',
+        title: 'The paper colour competes too, and where it is closest nothing prints',
+        get: () => !!L().prefilter.nearestPaper,
+        set: (v) => s.editLayerField(id, 'prefilter', { nearestPaper: v }),
+      }),
+      raw(button('Pick another colour from the picture', () => this.pickColour((c) => this.addColourLayer(id, c)),
+        'sm wide', 'Tap the picture on a colour the group is missing — it becomes a new layer of the group')),
+    ];
+  }
+
+  /**
+   * A picked colour joins the group as a layer of its own, a copy of the
+   * selected one in everything but its colour. A layer not yet in a group
+   * gets one, so there is something for the colours to compete within.
+   */
+  private addColourLayer(id: string, c: RGBA): void {
+    const s = this.store;
+    const src = s.layer(id);
+    if (!src) return;
+    const project = s.get();
+    const copy: Layer = JSON.parse(JSON.stringify(src));
+    copy.id = uid('layer');
+    copy.name = inkName(c);
+    copy.prefilter = { ...copy.prefilter, channel: 'nearest', ink: c };
+    copy.color = { ...copy.color, mode: 'solid', color: c };
+    copy.distribution = { ...copy.distribution, seed: Math.floor(Math.random() * 9000) + 1 } as Layer['distribution'];
+    if (src.groupId) {
+      const top = project.layers.reduce((t, l, i) => (l.groupId === src.groupId ? i : t), -1);
+      copy.groupId = src.groupId;
+      s.addLayer(copy, top + 1);
+    } else {
+      const at = project.layers.findIndex((l) => l.id === id);
+      delete copy.groupId;
+      s.addLayer(copy, at + 1);
+      s.createGroup({ id: uid('group'), name: 'Picture colours', collapsed: false }, [id, copy.id]);
+    }
   }
 
   /**
@@ -670,7 +768,10 @@ export class Inspector {
       if (!src) return;
       const c = L().color;
       const n = c.palette.length || 3;
-      const found = mode === 'tone' ? toneRamp(src, n, c.paper) : extractPalette(src, n, c.paper);
+      // Picked colours stay; sampling only fills the slots that are left.
+      const pinned = (c.pinned ?? []).filter((p) => c.palette.some((q) => same(p, q))).slice(0, n);
+      const auto = Math.max(0, n - pinned.length);
+      const found = [...pinned, ...(auto ? (mode === 'tone' ? toneRamp(src, auto, c.paper) : extractPalette(src, auto, c.paper)) : [])];
       if (!found.length) return;
       // Posterising is a decision about the whole layer, not just the swatches:
       // a tonal ramp only reads as bands if the dots stop straying between them
@@ -713,6 +814,11 @@ export class Inspector {
         'Cluster the photograph and use the colours it is actually made of')),
       raw(button('Posterise the tones', () => propose('tone'), 'sm',
         'Build a dark-to-light ramp from the photograph and hold every dot to it')),
+      raw(button('Pick a colour from the picture', () => this.pickColour((picked) => {
+        const c = L().color;
+        if (c.palette.length >= 8) return;
+        setC({ palette: [...c.palette, picked], pinned: [...(c.pinned ?? []), picked] }, 'pick');
+      }), 'sm', 'Tap the picture on a colour to add it to the inks. Picked colours are kept when you sample again')),
       raw(h('div', { class: 'ink-set-row' }, inkSetSelect)),
 
       group('How the dots use them'),
@@ -792,4 +898,9 @@ function toneSpread(layer: Layer): number {
   const max = layer.size.max;
   if (max <= 0) return 0;
   return Math.min(1, Math.max(0, 1 - lightEndSize(layer) / max));
+}
+
+/** Two colours equal to within rounding — for recognising a pinned ink in the palette. */
+function same(a: RGBA, b: RGBA): boolean {
+  return Math.abs(a[0] - b[0]) < 1e-3 && Math.abs(a[1] - b[1]) < 1e-3 && Math.abs(a[2] - b[2]) < 1e-3;
 }

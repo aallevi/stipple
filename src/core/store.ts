@@ -1,5 +1,6 @@
-import type { Layer, Project, ShapeDef } from './types';
+import type { Layer, Project, ShapeDef, LayerGroup } from './types';
 import { defaultProject, normaliseProject } from './defaults';
+import { groupSpan, tidyGroups } from './groups';
 
 /**
  * How much work a change forces the engine to redo. Higher subsumes lower.
@@ -33,7 +34,8 @@ const LAYER_OWN: Partial<Record<keyof Layer, true | string[]>> = {
   name: true,
   visible: true,
   color: true,
-  prefilter: ['channel', 'ink', 'undercolor'],
+  groupId: true,
+  prefilter: ['channel', 'ink', 'undercolor', 'nearestSet', 'nearestPaperColor'],
   distribution: ['angle', 'seed'],
 };
 
@@ -52,6 +54,7 @@ const FIELD_DIRTY: Record<keyof Layer, Dirty> = {
   rotation: Dirty.Composite,
   color: Dirty.Composite,
   transform: Dirty.Composite,
+  groupId: Dirty.None,
 };
 
 export type Change = {
@@ -173,7 +176,11 @@ export class Store {
    * layer that used it) never fans out by accident. One undo step covers the
    * whole edit.
    */
-  linked = false;
+  /**
+   * The layers an inspector edit fans out to — a selected group's members — or
+   * null for a single layer. Set by the layer panel from what is selected.
+   */
+  scope: string[] | null = null;
 
   editLayer(id: string, patch: Partial<Layer>): void {
     if (!this.linkedHere(id)) return this.updateLayer(id, patch);
@@ -181,6 +188,7 @@ export class Store {
     const layers = this.project.layers;
     layers.forEach((l, i) => {
       if (l.id === id) return this.applyLayer(i, patch);
+      if (!this.inScope(l)) return;
       const own: Partial<Layer> = {};
       for (const [k, v] of Object.entries(patch) as [keyof Layer, unknown][]) {
         if (LAYER_OWN[k] === true) continue;
@@ -209,6 +217,7 @@ export class Store {
     const source = this.layer(id)!;
     const skip = Array.isArray(LAYER_OWN[field]) ? LAYER_OWN[field] as string[] : [];
     this.project.layers.forEach((l, i) => {
+      if (l.id !== id && !this.inScope(l)) return;
       let p = patch as Record<string, unknown>;
       if (l.id !== id) {
         if (field === 'distribution' && l.distribution.algo !== source.distribution.algo) return;
@@ -220,7 +229,117 @@ export class Store {
   }
 
   private linkedHere(id: string): boolean {
-    return this.linked && this.project.layers.length > 1 && !!this.layer(id);
+    return !!this.scope && this.scope.length > 1 && this.scope.includes(id) && !!this.layer(id);
+  }
+
+  private inScope(l: Layer): boolean {
+    return !!this.scope && this.scope.includes(l.id);
+  }
+
+  // -- groups ---------------------------------------------------------------
+
+  group(id: string): LayerGroup | undefined {
+    return this.project.groups?.find((g) => g.id === id);
+  }
+
+  /** Rename, or fold and unfold. Folding is how you look at the stack, so it is not undoable. */
+  updateGroup(id: string, patch: Partial<Omit<LayerGroup, 'id'>>): void {
+    const g = this.group(id);
+    if (!g) return;
+    if ('name' in patch) this.commit(`group-name:${id}`);
+    Object.assign(g, patch);
+    this.pending.structural = true;
+    this.schedule();
+  }
+
+  /** Show or hide every layer of a group at once. */
+  setGroupVisible(id: string, visible: boolean): void {
+    this.commit(`group-vis:${id}`);
+    this.project.layers.forEach((l, i) => {
+      if (l.groupId === id && l.visible !== visible) this.applyLayer(i, { visible });
+    });
+    this.pending.structural = true;
+    this.schedule();
+  }
+
+  /** Delete a group and every layer in it. */
+  removeGroup(id: string): void {
+    const remaining = this.project.layers.filter((l) => l.groupId !== id);
+    if (!remaining.length || remaining.length === this.project.layers.length) return;
+    this.commit(`remove-group:${id}`);
+    this.project.layers = remaining;
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    this.pending.global = worst(this.pending.global, Dirty.All);
+    this.schedule();
+  }
+
+  /** Put adjacent layers into a new group. Layers already in another group leave it. */
+  createGroup(group: LayerGroup, ids: string[]): void {
+    this.commit(`group:${group.id}`);
+    this.project.groups = [...(this.project.groups ?? []), group];
+    for (const l of this.project.layers) if (ids.includes(l.id)) l.groupId = group.id;
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    this.schedule();
+  }
+
+  /** Dissolve a group, keeping its layers where they are. */
+  ungroup(id: string): void {
+    this.commit(`ungroup:${id}`);
+    for (const l of this.project.layers) if (l.groupId === id) delete l.groupId;
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    this.schedule();
+  }
+
+  /**
+   * Move a whole group to an insertion point in the stack as it stands now,
+   * the same convention as `moveLayer`. A point inside another group lands at
+   * that group's top instead: groups do not nest.
+   */
+  moveGroup(id: string, toIndex: number): void {
+    const layers = this.project.layers;
+    const span = groupSpan(this.project, id);
+    if (!span) return;
+    const [a, b] = span;
+    let t = Math.max(0, Math.min(toIndex, layers.length));
+    if (t > a && t <= b + 1) return; // inside itself, or just after: no move
+    const block = layers.slice(a, b + 1);
+    const rest = [...layers.slice(0, a), ...layers.slice(b + 1)];
+    if (t > b) t -= block.length;
+    const host = rest[t]?.groupId;
+    if (host && rest[t - 1]?.groupId === host) {
+      while (t < rest.length && rest[t].groupId === host) t += 1;
+    }
+    this.commit(`move-group:${id}`);
+    rest.splice(t, 0, ...block);
+    this.project.layers = rest;
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    for (const l of this.project.layers) {
+      if (l.input === 'below') this.markLayer(l.id, Dirty.Density);
+    }
+    this.schedule();
+  }
+
+  /** One step up (+1) or down (-1), past the whole layer or group that is next. */
+  nudgeGroup(id: string, delta: number): void {
+    const span = groupSpan(this.project, id);
+    if (!span) return;
+    const layers = this.project.layers;
+    const [a, b] = span;
+    if (delta > 0) {
+      const next = layers[b + 1];
+      if (!next) return;
+      const nspan = next.groupId ? groupSpan(this.project, next.groupId) : [b + 1, b + 1];
+      this.moveGroup(id, nspan![1] + 1);
+    } else {
+      const prev = layers[a - 1];
+      if (!prev) return;
+      const pspan = prev.groupId ? groupSpan(this.project, prev.groupId) : [a - 1, a - 1];
+      this.moveGroup(id, pspan![0]);
+    }
   }
 
   addLayer(layer: Layer, at?: number): void {
@@ -232,9 +351,11 @@ export class Store {
   }
 
   /** Swap the whole stack, for operations that only make sense as a set. */
-  replaceLayers(layers: Layer[]): void {
+  replaceLayers(layers: Layer[], groups: LayerGroup[] = []): void {
     this.commit('replace-layers');
     this.project.layers = layers;
+    this.project.groups = groups;
+    tidyGroups(this.project);
     this.pending.structural = true;
     this.pending.global = worst(this.pending.global, Dirty.All);
     this.schedule();
@@ -245,6 +366,7 @@ export class Store {
     if (idx < 0) return;
     this.commit(`remove:${id}`);
     this.project.layers.splice(idx, 1);
+    tidyGroups(this.project);
     this.pending.structural = true;
     this.schedule();
   }
@@ -259,15 +381,30 @@ export class Store {
    * Doing that adjustment here is what keeps a drop landing where the line was
    * drawn, in both directions.
    */
-  moveLayer(id: string, toIndex: number): void {
+  /**
+   * `into`: leave undefined to decide by where it lands (between two layers of
+   * a group joins it), pass a group id to put it in that group regardless —
+   * the slot just under a group's header row — or null to take it out.
+   */
+  moveLayer(id: string, toIndex: number, into?: string | null): void {
     const from = this.project.layers.findIndex((l) => l.id === id);
     if (from < 0) return;
     const target = Math.max(0, Math.min(toIndex, this.project.layers.length));
     const dest = target > from ? target - 1 : target;
-    if (dest === from) return;
+    if (dest === from && into === undefined) return;
     this.commit(`move:${id}`);
     const [layer] = this.project.layers.splice(from, 1);
     this.project.layers.splice(dest, 0, layer);
+    // Dropped between two layers of one group, it joins that group; dropped
+    // anywhere else, it leaves the one it was in — the way a layer moves in
+    // and out of a folder in any compositing tool.
+    const below = this.project.layers[dest - 1];
+    const above = this.project.layers[dest + 1];
+    if (into) layer.groupId = into;
+    else if (into === null) delete layer.groupId;
+    else if (below?.groupId && below.groupId === above?.groupId) layer.groupId = below.groupId;
+    else if (layer.groupId && below?.groupId !== layer.groupId && above?.groupId !== layer.groupId) delete layer.groupId;
+    tidyGroups(this.project);
     this.pending.structural = true;
     // Anything reading from `below` sees a different image now.
     for (const l of this.project.layers) {
@@ -427,7 +564,7 @@ export class Store {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     this.blobs.clear();
-    this.project = normaliseProject(project);
+    this.project = tidyGroups(normaliseProject(project));
     this.pending = emptyChange();
     this.pending.structural = true;
     this.pending.shapes = true;

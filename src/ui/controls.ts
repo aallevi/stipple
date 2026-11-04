@@ -134,6 +134,8 @@ export function slider(opts: {
   /** Double-clicking the label snaps back to this. */
   reset?: number;
   title?: string;
+  /** A short explanation behind an ⓘ beside the label, for a phone that has no tooltips. */
+  info?: string;
   /**
    * `log` spaces the track by ratio rather than by difference.
    *
@@ -169,6 +171,7 @@ export function slider(opts: {
   if (opts.unit) field.append(h('span', { class: 'unit' }, opts.unit));
 
   const row = h('div', { class: 'ctl' }, name, input, field);
+  const el = opts.info ? withInfo(row, name, opts.label, opts.info) : row;
 
   const show = (v: number): void => {
     input.value = String(toPos(v));
@@ -194,7 +197,7 @@ export function slider(opts: {
   bindDrag(input, opts.interaction);
 
   return {
-    el: row,
+    el,
     sync() {
       show(opts.get());
     },
@@ -554,4 +557,26 @@ export function installTouchSliders(root: HTMLElement): void {
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
   });
+}
+
+/**
+ * Give one control an ⓘ beside its label and a note under it, the same as a
+ * section's. Returns the wrapper to use in place of `row`.
+ */
+function withInfo(row: HTMLElement, label: HTMLElement, title: string, text: string): HTMLElement {
+  const note = h('p', { class: 'section-info ctl-info', hidden: '' }, text);
+  const btn = h('button', { class: 'info-btn', type: 'button', title: `What is ${title}?`, 'aria-expanded': 'false' }, 'i');
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const show = note.hidden;
+    note.hidden = !show;
+    btn.classList.toggle('on', show);
+    btn.setAttribute('aria-expanded', String(show));
+  });
+  // Take the label's place first, then adopt it — a wrapper built around the
+  // label would already contain it and could not stand in for it.
+  const wrap = h('span', { class: 'ctl-label-wrap' });
+  label.replaceWith(wrap);
+  wrap.append(label, btn);
+  return h('div', { class: 'ctl-stack' }, row, note);
 }

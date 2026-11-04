@@ -75,7 +75,7 @@ export class App {
       // told directly which of its tiles is now the current one.
       this.shapes.setSelected(this.store.layer(id)?.shapeId);
       this.inspector.update(id);
-    });
+    }, () => this.engine.sourceImage);
     this.shapes = new ShapesPanel(
       this.store,
       (id, bmp) => {
@@ -92,6 +92,7 @@ export class App {
       this.shapes,
       this.engine.voronoiAvailable,
       () => this.engine.sourceImage,
+      (done) => this.pickColour(done),
     );
 
     root.append(this.buildLayout());
@@ -496,7 +497,67 @@ export class App {
 
   // -- viewport ------------------------------------------------------------
 
+  /** Waiting for a tap on the picture to sample, or null. */
+  private picking: ((c: [number, number, number, number]) => void) | null = null;
+
+  /**
+   * Arm the eyedropper. The next press on the picture samples the photo — not
+   * the drawing — under it, averaged over a few pixels so a single noisy pixel
+   * does not decide the colour. Esc, or a press off the picture, cancels.
+   */
+  pickColour(done: (c: [number, number, number, number]) => void): void {
+    if (!this.engine.sourceImage || !this.dropZone.hidden) {
+      this.notify('Open a picture first, then pick a colour from it', true);
+      return;
+    }
+    this.picking = done;
+    this.canvas.classList.add('picking');
+    this.notify('Tap the picture on the colour you want \u2014 Esc cancels');
+  }
+
+  private endPicking(): void {
+    this.picking = null;
+    this.canvas.classList.remove('picking');
+  }
+
+  private samplePhoto(clientX: number, clientY: number): [number, number, number, number] | null {
+    const src = this.engine.sourceImage;
+    if (!src) return null;
+    const r = this.pictureRect();
+    const box = this.stage.getBoundingClientRect();
+    const u = (clientX - box.left - r.x) / r.w;
+    const v = (clientY - box.top - r.y) / r.h;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+    const cx = Math.min(src.width - 1, Math.floor(u * src.width));
+    const cy = Math.min(src.height - 1, Math.floor(v * src.height));
+    let rr = 0, gg = 0, bb = 0, n = 0;
+    for (let y = Math.max(0, cy - 2); y <= Math.min(src.height - 1, cy + 2); y++) {
+      for (let x = Math.max(0, cx - 2); x <= Math.min(src.width - 1, cx + 2); x++) {
+        const o = (y * src.width + x) * 4;
+        rr += src.rgba[o]; gg += src.rgba[o + 1]; bb += src.rgba[o + 2]; n += 1;
+      }
+    }
+    return [rr / n / 255, gg / n / 255, bb / n / 255, 1];
+  }
+
   private bindViewport(): void {
+    // The eyedropper goes first and swallows the press, so picking a colour
+    // never also pans the view.
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (!this.picking) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      const done = this.picking;
+      const c = this.samplePhoto(e.clientX, e.clientY);
+      this.endPicking();
+      if (c) {
+        done(c);
+        this.notify('Colour picked');
+      } else {
+        this.notify('That was off the picture \u2014 nothing picked');
+      }
+    });
+
     // Every pointer on the canvas, by id. One pans; two pinch — zooming by the
     // change in their spread and panning by the travel of their midpoint, so
     // the point between your fingers stays under your fingers.
@@ -616,6 +677,9 @@ export class App {
         this.layers.nudge(e.key === ']' ? 1 : -1);
       } else if (e.key === '0') {
         this.fitToWindow();
+      } else if (e.key === 'Escape' && this.picking) {
+        this.endPicking();
+        this.notify('Picking cancelled');
       }
     });
   }
