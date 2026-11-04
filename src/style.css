@@ -868,7 +868,9 @@ input[type='range']::-moz-range-thumb {
   .layer-grip { font-size: 18px; padding: 6px 0; touch-action: none; }
   .vis { font-size: 14px; }
 
-  .export-select { display: block; }
+  /* A select is as wide as its longest option, and these options are whole
+     sentences; the closed menu only needs to say what it is. */
+  .export-select { display: block; width: 108px; }
   .export-buttons { display: none; }
   .info-btn { width: 26px; height: 26px; font-size: 14px; }
   .size-field .num { font-size: 16px; padding: 4px 6px; }

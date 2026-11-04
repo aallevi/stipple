@@ -139,15 +139,10 @@ export const INK_SETS: Record<string, { label: string; inks: RGBA[]; paper: RGBA
  * rather than four plates stacked into a puddle that never dries.
  */
 export function buildSeparation(kind: SeparationKind, canvas: Project['canvas']): Layer[] {
-  const lineature = 45;
-  // A circle inscribed in its cell covers only 79% of it, so a halftone dot has
-  // to overfill the cell to reach solid; corner to corner is sqrt(2) across.
-  const cell = canvas.dpi / lineature;
-  // Layer lengths are fractions of the short edge (`core/scale.ts`), and the
-  // screen is a physical 45 lpi, so the two meet here: the cell is worked out in
-  // paper terms and then written down as the proportion of *this* document it
-  // comes to.
-  const unit = unitPx(canvas);
+  // 45 lines per inch at the size the document is now, written down as cells
+  // across it — from here on the screen scales with the picture like
+  // everything else does.
+  const cells = Math.max(4, Math.round((45 * unitPx(canvas)) / Math.max(1, canvas.dpi)));
 
   return kind.inks.map((ink, i) => {
     const layer = defaultLayer(ink.name, 'halftone');
@@ -163,12 +158,15 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
     };
     layer.color = { ...layer.color, mode: 'solid', color: ink.color };
     layer.distribution = {
-      algo: 'halftone', lineature, angle: ANGLES[i % ANGLES.length],
+      algo: 'halftone', cells, angle: ANGLES[i % ANGLES.length],
       lattice: 'square', toneRange: [0, 1], invertDensity: false,
     };
     // gamma 0.5 makes ink *area* track coverage, which is the whole point of a
     // halftone: with a linear ramp a 50% grey prints at about 68%.
-    layer.size = { ...layer.size, min: 0, max: (cell * Math.SQRT2) / unit, fromTone: 1, gamma: 0.5, jitter: 0 };
+    // A circle inscribed in its cell covers only 79% of it, so a halftone dot
+    // has to overfill the cell to reach solid; corner to corner is sqrt(2) of
+    // a cell, and a cell is 1/cells of the short edge.
+    layer.size = { ...layer.size, min: 0, max: Math.SQRT2 / cells, fromTone: 1, gamma: 0.5, jitter: 0 };
     return layer;
   });
 }

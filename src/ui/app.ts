@@ -795,7 +795,7 @@ export class App {
       }
       // Version 1 files are converted on load (`normaliseProject`); anything
       // newer than this build knows was made by a later version of the app.
-      if (project.version !== 1 && project.version !== 2) {
+      if (![1, 2, 3].includes(project.version)) {
         throw new Error(`${picked.name} was saved by a newer version of Stipple`);
       }
       // Built-ins are not stored per-project by identity, so make sure a project

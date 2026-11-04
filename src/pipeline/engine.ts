@@ -378,7 +378,7 @@ export class Engine {
       case 'jittered':
         return generateJittered(layer.distribution, ctx);
       case 'halftone':
-        return generateHalftone(layer.distribution, ctx, project.canvas.dpi);
+        return generateHalftone(layer.distribution, ctx);
       case 'voronoi':
         return generateVoronoi(layer.distribution, ctx, this.voronoi);
     }

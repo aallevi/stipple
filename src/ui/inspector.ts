@@ -480,20 +480,20 @@ export class Inspector {
     return [
       algoSelect,
       slider({
-        label: 'Lineature', min: 5, max: 400, step: 1,
-        curve: 'log', interaction: ia, unit: 'lpi', reset: 40,
-        title: 'Lines per inch of paper. The one density that is deliberately '
-          + 'physical rather than proportional: a halftone screen is a real object, '
-          + 'so enlarging the document puts more cells across the image, exactly as '
-          + 'enlarging the print would',
-        get: () => d().lineature,
-        set: (v) => s.editLayerField(id, 'distribution', { lineature: v } as never),
+        label: 'Screen', min: 4, max: 2000, step: 1,
+        curve: 'log', interaction: ia, reset: 136,
+        title: 'Halftone cells across the short edge of the picture. Fewer cells, bigger '
+          + 'dots. Relative to the picture, so resizing the document keeps the screen in '
+          + 'proportion; the lines-per-inch reading below follows the print size',
+        get: () => d().cells,
+        set: (v) => s.editLayerField(id, 'distribution', { cells: v } as never),
       }),
       readout(() => {
         const c = this.store.get().canvas;
-        const cell = Math.max(1, c.dpi) / Math.max(1, d().lineature);
-        return `${formatSpan(cell / unitPx(c), c)} cell · about `
-          + `${Math.round(unitPx(c) / cell).toLocaleString()} across the short edge`;
+        const cells = Math.max(1, d().cells);
+        const lpi = (cells * Math.max(1, c.dpi)) / unitPx(c);
+        return `${cells.toLocaleString()} cells across · ${formatSpan(1 / cells, c)} each · `
+          + `${lpi < 10 ? lpi.toFixed(1) : Math.round(lpi)} lpi at this print size`;
       }),
       slider({
         label: 'Screen angle', min: -180, max: 180, step: 0.5, interaction: ia, unit: '°', reset: 45,

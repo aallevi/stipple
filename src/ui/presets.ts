@@ -77,7 +77,7 @@ export const PRESETS: Preset[] = [
         const l = defaultLayer(`Screen ${angle}°`, 'halftone');
         return tune(l, {
           blend: 'multiply',
-          distribution: { algo: 'halftone', lineature: 34, angle, lattice: 'square', toneRange: [0, 1], invertDensity: false },
+          distribution: { algo: 'halftone', cells: Math.max(4, Math.round((34 * Math.min(w, h)) / 300)), angle, lattice: 'square', toneRange: [0, 1], invertDensity: false },
           size: { min: px(0), max: px(9), fromTone: 1, invert: false, jitter: 0 },
           color: { ...l.color, mode: 'solid', color: colors[i], alpha: 1 },
         });

@@ -11,12 +11,12 @@ import { allocPoints, inkAt, type GenContext, type PointBuffer } from './types';
  * exact, and stacking three of these at 15°/45°/75° gives you real rosette
  * separations.
  */
-export function generateHalftone(p: HalftoneParams, ctx: GenContext, dpi: number): PointBuffer {
+export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffer {
   const { density, width, height, mask } = ctx;
 
-  // lpi -> px per cell. Clamped so a stray parameter cannot ask for a 1px screen
-  // across a 10000px canvas.
-  const cell = Math.max(1.5, dpi / Math.max(1, p.lineature));
+  // Cells across the short edge -> px per cell. Clamped so a stray parameter
+  // cannot ask for a 1px screen across a 10000px canvas.
+  const cell = Math.max(1.5, ctx.unit / Math.max(1, p.cells));
   const theta = (p.angle * Math.PI) / 180;
   const cos = Math.cos(theta);
   const sin = Math.sin(theta);

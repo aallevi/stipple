@@ -128,8 +128,8 @@ describe('generateHalftone', () => {
   const density = ramp();
 
   it('produces a rotated lattice that still covers the canvas', () => {
-    const p = { ...defaultDistribution('halftone'), lineature: 20, angle: 30 } as HalftoneParams;
-    const out = generateHalftone(p, ctx(density), 300);
+    const p = { ...defaultDistribution('halftone'), cells: 20, angle: 30 } as HalftoneParams;
+    const out = generateHalftone(p, ctx(density));
     expect(out.count).toBeGreaterThan(50);
 
     // A rotated screen must still reach every corner region of the canvas.
@@ -143,12 +143,27 @@ describe('generateHalftone', () => {
     expect(quadrants.every((q) => q > 0)).toBe(true);
   });
 
-  it('scales point count with lineature', () => {
+  it('scales point count with the number of cells', () => {
     const coarse = generateHalftone(
-      { ...defaultDistribution('halftone'), lineature: 15 } as HalftoneParams, ctx(density), 300);
+      { ...defaultDistribution('halftone'), cells: 15 } as HalftoneParams, ctx(density));
     const fine = generateHalftone(
-      { ...defaultDistribution('halftone'), lineature: 60 } as HalftoneParams, ctx(density), 300);
+      { ...defaultDistribution('halftone'), cells: 60 } as HalftoneParams, ctx(density));
     expect(fine.count).toBeGreaterThan(coarse.count * 3);
+  });
+
+  it('keeps its proportions when the document is resized', () => {
+    // The same screen on a canvas twice the size must be the same screen: the
+    // same number of cells, each sitting at the same fraction of the picture.
+    const p = { ...defaultDistribution('halftone'), cells: 24, angle: 15 } as HalftoneParams;
+    const small = ctx(density);
+    const big: GenContext = { ...small, width: small.width * 2, height: small.height * 2, unit: small.unit * 2 };
+    const a = generateHalftone(p, small);
+    const b = generateHalftone(p, big);
+    expect(b.count).toBe(a.count);
+    for (let i = 0; i < a.count; i += Math.max(1, Math.floor(a.count / 50))) {
+      expect(b.data[i * POINT_STRIDE] / big.width).toBeCloseTo(a.data[i * POINT_STRIDE] / small.width, 6);
+      expect(b.data[i * POINT_STRIDE + 1] / big.height).toBeCloseTo(a.data[i * POINT_STRIDE + 1] / small.height, 6);
+    }
   });
 });
 

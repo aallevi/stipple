@@ -123,15 +123,17 @@ export type VoronoiParams = {
 export type HalftoneParams = {
   algo: 'halftone';
   /**
-   * Lines per inch of the screen.
+   * Screen cells across the short edge of the picture.
    *
-   * The one distribution parameter that is deliberately *not* relative to the
-   * picture. A halftone screen is a physical object — 45 lpi is 45 lines to the
-   * inch of paper — so it is pinned to the document's dpi, and enlarging the
-   * document puts more cells across the image exactly as enlarging a print
-   * would. The panel writes the relative reading beside it.
+   * Relative, like every other length a layer carries, so a halftone keeps its
+   * proportions whatever the document is resized to: the cells, the dots in
+   * them and the paper between stay the same fraction of the picture. This used
+   * to be lines per inch of paper, which made the screen the one thing that did
+   * not scale with the drawing — enlarge the sheet and more, relatively smaller
+   * cells appeared under dots that had not shrunk with them. The panel still
+   * writes the lines-per-inch reading beside it, at the current print size.
    */
-  lineature: number;
+  cells: number;
   /** Screen rotation in degrees. */
   angle: number;
   /** Grid geometry. */
@@ -308,10 +310,11 @@ export type CanvasSettings = {
 
 /**
  * `2` moved every layer length from canvas pixels to fractions of the short
- * edge, and the stochastic screen from a spacing to a dot count. Version `1`
+ * edge, and the stochastic screen from a spacing to a dot count. `3` did the
+ * same for the halftone screen, from lines per inch to cells across. Older
  * files are converted on load by `normaliseProject`.
  */
-export type ProjectVersion = 1 | 2;
+export type ProjectVersion = 1 | 2 | 3;
 
 export type Project = {
   version: ProjectVersion;

@@ -1,6 +1,6 @@
 import type {
   ColorParams, DistributionAlgo, DistributionParams, JitteredParams, Layer, LayerMask,
-  Prefilter, Project, RotationParams, ShapeDef, SizeParams, Transform,
+  HalftoneParams, Prefilter, Project, RotationParams, ShapeDef, SizeParams, Transform,
 } from './types';
 import { unitPx } from './scale';
 
@@ -79,7 +79,8 @@ export function defaultDistribution(algo: DistributionAlgo): DistributionParams 
       };
     case 'halftone':
       return {
-        algo: 'halftone', lineature: 40, angle: 45, lattice: 'square',
+        // 40 lpi on the default 1024px sheet at 300 dpi.
+        algo: 'halftone', cells: 136, angle: 45, lattice: 'square',
         toneRange: [0, 1], invertDensity: false,
       };
   }
@@ -128,8 +129,26 @@ export function normaliseProject(project: Project): Project {
     if (layer.prefilter && layer.prefilter.channel === undefined) layer.prefilter.channel = 'luma';
   }
   if ((project.version ?? 1) < 2) toRelativeLengths(project);
-  project.version = 2;
+  if ((project.version ?? 1) < 3) toRelativeScreens(project);
+  project.version = 3;
   return project;
+}
+
+/**
+ * Version 2 → 3: a halftone's lines per inch become cells across the short
+ * edge, at the size and resolution the file was saved with — so it reopens
+ * with exactly the screen it was left with, and from then on scales with it.
+ */
+function toRelativeScreens(project: Project): void {
+  const canvas = project.canvas ?? { width: 1024, height: 1024, dpi: 300 } as Project['canvas'];
+  const inches = unitPx(canvas) / Math.max(1, canvas.dpi);
+  for (const layer of project.layers ?? []) {
+    const d = layer.distribution as HalftoneParams & { lineature?: number };
+    if (d?.algo === 'halftone' && typeof d.lineature === 'number') {
+      d.cells = Math.max(1, Math.round(d.lineature * inches));
+      delete d.lineature;
+    }
+  }
 }
 
 /**
@@ -168,7 +187,7 @@ function toRelativeLengths(project: Project): void {
 
 export function defaultProject(width = 1024, height = 1024): Project {
   return {
-    version: 2,
+    version: 3,
     canvas: { width, height, dpi: 300, background: [1, 1, 1, 1], units: 'mm' },
     shapes: BUILTIN_SHAPES.map((s) => ({ ...s })),
     layers: [defaultLayer('Stipple 1')],

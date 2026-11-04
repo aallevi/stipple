@@ -5,7 +5,7 @@ import { generateJittered } from '../src/dist/jittered';
 import { DensityMap } from '../src/image/density';
 import type { GenContext } from '../src/dist/types';
 import { defaultMask } from '../src/core/defaults';
-import type { JitteredParams, Project } from '../src/core/types';
+import type { HalftoneParams, JitteredParams, Project } from '../src/core/types';
 
 /**
  * Scale independence.
@@ -132,7 +132,7 @@ describe('normaliseProject', () => {
     expect(layer.prefilter.blur).toBeCloseTo(0.01);
     expect(layer.transform.offsetX).toBeCloseTo(0.25);
     expect(layer.transform.offsetY).toBeCloseTo(-0.1);
-    expect(p.version).toBe(2);
+    expect(p.version).toBe(3);
   });
 
   it('turns a spacing into a dot count across the picture', () => {
@@ -141,7 +141,18 @@ describe('normaliseProject', () => {
     expect('spacing' in d).toBe(false);
   });
 
-  it('leaves a version 2 file exactly as it is', () => {
+  it('turns a version 2 lineature into cells across, keeping the same screen', () => {
+    const project = defaultProject(1500, 900); // short edge 900px = 3 in at 300 dpi
+    const layer = project.layers[0];
+    layer.distribution = { algo: 'halftone', lineature: 45, angle: 45, lattice: 'square',
+      toneRange: [0, 1], invertDensity: false } as never;
+    project.version = 2;
+    const d = normaliseProject(project).layers[0].distribution as HalftoneParams;
+    expect(d.cells).toBe(135); // 45 lines/in × 3 in
+    expect('lineature' in d).toBe(false);
+  });
+
+  it('leaves a current file exactly as it is', () => {
     const p = defaultProject();
     const before = JSON.stringify(p);
     expect(JSON.stringify(normaliseProject(p))).toBe(before);

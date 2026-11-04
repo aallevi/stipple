@@ -25,7 +25,7 @@ is usually enough to predict what it will do.
  SOURCE ──► Image adjust ──► Ink ──────► tone 0..1 ──┬──► Tone mask ──► keep / drop
             gamma, blur,     luma, or                │
             brightness,      coverage of             └──► Distribution ──► where the
-            contrast,        one ink                      density / lineature / count
+            contrast,        one ink                      density / screen / count  
             sharpen, invert                                        │
                                                                    ▼
                                             POINT (x, y, tone, gradient, random)
@@ -53,16 +53,17 @@ is usually enough to predict what it will do.
 Three rules fall out of that, and they are the ones worth remembering:
 
 **Nothing is measured in pixels.** Every length a layer carries — `Size`, `Blur`,
-`Offset` — is stored as a fraction of the picture's short edge, and `Density` is a
-count of dots across it. So a document twice as wide is the same drawing at twice the
+`Offset` — is stored as a fraction of the picture's short edge, `Density` is a count
+of dots across it, and the halftone `Screen` is a count of cells across it. So a document twice as wide is the same drawing at twice the
 size, a preset lands the same way on a snapshot and on a scan, and the sliders offer
 the same range of coarse-to-fine whatever resolution you opened. The panel writes all
 of it in millimetres, inches or per cent — pick which in Document — so you never have
 to think in fractions either.
 
-The one deliberate exception is the halftone `Lineature`, which is lines per inch of
-*paper*. A halftone screen is a physical object, so enlarging the document puts more
-cells across the image, exactly as enlarging the print would.
+There are no exceptions: resize the document any way you like and every dot, gap and
+screen cell keeps its proportion to the picture. The halftone panel still writes the
+lines per inch the screen comes to at the current print size, because that is the number
+a print shop will ask for.
 
 **Shape parameters are fractions too.** `Length` is a fraction of the mark's cell and
 `Thickness` is a fraction of the mark's own length, so a line keeps its proportions
@@ -196,12 +197,11 @@ millimetres are how big the print is, and `Resolution` is the exchange rate: rai
 keeps the print size and gives the file more pixels, and `2×` / `½×` do that in one press.
 That is the upscale: the same print, the same screen, every dot drawn with twice the
 pixels — how to get a crisp PNG out of a small source. Typing a bigger size in
-millimetres is different: a bigger sheet, and since the halftone is ruled in lines per
-inch of paper, more screen cells across it. Changes are staged until `Apply`, because a resize
-re-runs every layer.
+millimetres makes a bigger print of the same drawing, so its lines per inch go down.
+Changes are staged until `Apply`, because a resize re-runs every layer.
 
-**One canvas pixel is 1/dpi of an inch**, everywhere — the panel readout, the halftone
-lineature, and all four exporters. A 900 × 600 document at 300 dpi is 3 × 2 inches, and
+**One canvas pixel is 1/dpi of an inch**, everywhere — the panel readout, the halftone's
+lines-per-inch reading, and all four exporters. A 900 × 600 document at 300 dpi is 3 × 2 inches, and
 that is the size the SVG, the PDF and the plates open at; the PNG comes out 900 × 600,
 one pixel per canvas pixel. Set the resolution you intend to print at and the numbers
 in the panel are the numbers you get.
