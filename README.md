@@ -20,7 +20,14 @@ Everything runs on your machine, and your images never leave it.
 
 | | |
 |---|---|
-| ![Frankenstein in two inks, green and yellow, as overprinting halftone plates](assets/gallery/frankenstein.jpg) | ![Skeletons from an old engraving, as a flowing stochastic stipple](assets/gallery/skeletons.jpg) |
+| ![Frankenstein in two inks, green and yellow, as overprinting halftone plates](assets/gallery/frankenstein.jpg) | ![A skeleton orchestra as a flowing stipple of short dashes](assets/gallery/skeletons.jpg) |
+
+And how they look in the app — each original dropped in and set up as it was printed:
+
+| | |
+|---|---|
+| ![The portal of Notre-Dame pressed into a wide sheet, one fine black halftone at 45°](assets/gallery/app-arch.jpg) | ![Frankenstein as yellow and green overprinting plates, eyes censored](assets/gallery/app-frankenstein.jpg) |
+| ![A skeleton orchestra as dashes that follow the contours](assets/gallery/app-skeletons.jpg) | |
 
 - **Layers and groups.** Each layer has its own algorithm, shape, size, tone mask and
   blend mode, and can read *the drawing beneath it* instead of the photo. Groups let you
