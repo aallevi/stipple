@@ -14,6 +14,14 @@ prints I'm happy with, and I hope it does the same for you.
 **[Try it in your browser →](https://aallevi.github.io/stipple/)** No install needed.
 Everything runs on your machine, and your images never leave it.
 
+### Made with Stipple
+
+![A carved stone arch as a fine halftone screen](assets/gallery/arch.jpg)
+
+| | |
+|---|---|
+| ![Frankenstein in two inks, green and yellow, as overprinting halftone plates](assets/gallery/frankenstein.jpg) | ![Skeletons from an old engraving, as a flowing stochastic stipple](assets/gallery/skeletons.jpg) |
+
 - **Layers and groups.** Each layer has its own algorithm, shape, size, tone mask and
   blend mode, and can read *the drawing beneath it* instead of the photo. Groups let you
   edit a set of layers together or one at a time.
