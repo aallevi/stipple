@@ -1,5 +1,6 @@
 import { buildInkSet, extractPalette, inkShares, toneRamp } from '../core/color';
 import { defaultDistribution, defaultRotation, defaultSize } from '../core/defaults';
+import { angleBetween, canFollow, foldAngle, screenAngle, screenPeriod } from '../core/angles';
 import { unitPx } from '../core/scale';
 import type { Store } from '../core/store';
 import {
@@ -620,11 +621,7 @@ export class Inspector {
         return `${cells.toLocaleString()} cells across · ${formatSpan(1 / cells, c)} each · `
           + `${lpi < 10 ? lpi.toFixed(1) : Math.round(lpi)} lpi at this print size`;
       }),
-      slider({
-        label: 'Screen angle', min: -180, max: 180, step: 0.5, interaction: ia, unit: '°', reset: 45,
-        get: () => d().angle,
-        set: (v) => s.editLayerField(id, 'distribution', { angle: v } as never),
-      }),
+      ...this.angleControls(id),
       select<'square' | 'hex' | 'line'>({
         label: 'Lattice',
         options: [
@@ -637,6 +634,109 @@ export class Inspector {
       }),
       // A halftone screen is deterministic, so there is no seed to offer.
       ...tail(false),
+    ];
+  }
+
+  /**
+   * A screen's angle: absolute, or measured from another screen so that a set
+   * of plates turns together and keeps the angles between them. The readout
+   * says where the screen really points and how far it sits from each of the
+   * others, folded by the lattice's symmetry — two hexagonal screens 60° apart
+   * are the same screen, so that is reported as 0°, not 60°.
+   */
+  private angleControls(id: string): Control[] {
+    const s = this.store;
+    const ia = this.interaction;
+    const L = (): Layer => s.layer(id)!;
+    const d = (): HalftoneParams => L().distribution as HalftoneParams;
+    const layers = (): Layer[] => s.get().layers;
+    const screens = (): Layer[] => layers().filter((l) => l.distribution.algo === 'halftone');
+    /** The screens this one is set against: its group's, or every screen when it has none. */
+    const peers = (): Layer[] => screens().filter((l) => l.id !== id
+      && (L().groupId ? l.groupId === L().groupId : true));
+    const eff = (l: Layer): number => screenAngle(l, layers());
+    const fmtDeg = (v: number): string => `${Math.round(v * 100) / 100}\u00b0`;
+
+    // Measured from: rebuilt on every sync, since screens come and go and get renamed.
+    const from = h('select') as HTMLSelectElement;
+    from.addEventListener('change', () => {
+      const here = eff(L());
+      const ref = from.value ? s.layer(from.value) : undefined;
+      s.updateLayerField(id, 'distribution', (ref
+        ? { angle: round2(here - eff(ref)), angleFrom: ref.id }
+        : { angle: round2(here), angleFrom: undefined }) as never);
+    });
+    const fromCtl: Control = {
+      el: h('div', { class: 'ctl ctl-select' },
+        h('span', { class: 'ctl-label', title: 'Absolute, or an offset from another screen that this one turns with' }, 'Angle from'),
+        h('div', { class: 'select-wrap' }, from)),
+      sync() {
+        const opts: [string, string][] = [['', 'Absolute (0\u00b0 = horizontal)'],
+          ...screens().filter((l) => canFollow(layers(), id, l.id)).map((l): [string, string] => [l.id, `${l.name} (${fmtDeg(eff(l))})`])];
+        const key = JSON.stringify(opts);
+        if (from.dataset.key !== key) {
+          from.replaceChildren(...opts.map(([v, t]) => h('option', { value: v }, t)));
+          from.dataset.key = key;
+        }
+        from.value = d().angleFrom && opts.some(([v]) => v === d().angleFrom) ? d().angleFrom! : '';
+      },
+    };
+
+    const relative = (): boolean => !!d().angleFrom && !!s.layer(d().angleFrom!);
+    const angleSlider = (label: string, reset: number, title: string): Control => slider({
+      label, min: -180, max: 180, step: 0.1, interaction: ia, unit: '\u00b0', reset, title,
+      get: () => d().angle,
+      set: (v) => s.editLayerField(id, 'distribution', { angle: v } as never),
+    });
+
+    /**
+     * Make this screen the anchor of its set: it goes absolute where it stands,
+     * and every other screen follows it — where each is now, or at `target`.
+     * Going absolute first is what keeps a screen this one followed from ending
+     * up following it back.
+     */
+    const follow = (key: string, target?: (i: number, n: number) => number): void => {
+      const base = eff(L());
+      const list = peers();
+      const now = list.map(eff);
+      s.batch(key, () => {
+        s.updateLayerField(id, 'distribution', { angle: round2(base), angleFrom: undefined } as never);
+        list.forEach((l, i) => {
+          const at = target ? target(i, list.length) : now[i];
+          s.updateLayerField(l.id, 'distribution', { angle: round2(at - base), angleFrom: id } as never);
+        });
+      });
+    };
+    // This screen first, the others at even steps across one turn of its lattice.
+    const spread = (): void => {
+      const base = eff(L());
+      const period = screenPeriod(d().lattice);
+      follow('angles:spread', (i, n) => base + (period / (n + 1)) * (i + 1));
+    };
+
+    return [
+      fromCtl,
+      when(() => !relative(), angleSlider('Screen angle', 45, 'Degrees from horizontal')),
+      when(relative, angleSlider('Offset', 0, 'Degrees from the screen this one follows; turn that one and this turns with it')),
+      readout(() => {
+        const here = eff(L());
+        const period = screenPeriod(d().lattice);
+        const folded = foldAngle(here, period);
+        const lattice = d().lattice === 'hex' ? 'a hexagonal' : d().lattice === 'line' ? 'a line' : 'a square';
+        const parts = [`Points at ${fmtDeg(here)}`];
+        if (Math.abs(folded - foldAngle(here, 360)) > 1e-6) parts.push(`the same as ${fmtDeg(folded)} \u2014 ${lattice} screen repeats every ${period}\u00b0`);
+        const others = peers().map((l) => {
+          const lp = (l.distribution as HalftoneParams).lattice === d().lattice ? period : 180;
+          return `${fmtDeg(Math.abs(angleBetween(here, eff(l), lp)))} from ${l.name}`;
+        });
+        return [parts.join(', '), ...others].join(' \u00b7 ');
+      }),
+      when(() => peers().length > 0, raw(h('div', { class: 'angle-actions' },
+        button('Others follow this screen', () => follow('angles:follow'), 'sm',
+          'Every other screen in the set keeps its angle but turns with this one from now on'),
+        button('Spread evenly', spread, 'sm',
+          'This screen and the others at equal steps across one turn of the lattice, all following this one'),
+      ))),
     ];
   }
 
@@ -995,3 +1095,4 @@ function same(a: RGBA, b: RGBA): boolean {
   return Math.abs(a[0] - b[0]) < 1e-3 && Math.abs(a[1] - b[1]) < 1e-3 && Math.abs(a[2] - b[2]) < 1e-3;
 }
 
+const round2 = (v: number): number => Math.round(v * 100) / 100;

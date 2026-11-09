@@ -9,6 +9,7 @@ import { Compositor, DEFAULT_PREVIEW, type PreviewView } from '../gl/composite';
 import { createContext, createFullscreenQuad, RenderTarget, type GL } from '../gl/context';
 import { makeView, PointRenderer, type PointBatch } from '../gl/renderer';
 import { DensityMap, type ImageSource } from '../image/density';
+import { screenAngle } from '../core/angles';
 import { ShapeAtlas } from '../shape/atlas';
 
 export type Viewport = { zoom: number; panX: number; panY: number };
@@ -162,7 +163,7 @@ export class Engine {
     const pending: { layer: Layer; cache: LayerCache; dKey: string; pKey: string; index: number }[] = [];
     project.layers.forEach((raw, index) => {
       if (!raw.visible || raw.opacity <= 0) return;
-      const layer = this.withCompetitors(resolveLayer(raw, unit), project);
+      const layer = this.withCompetitors(this.withScreenAngle(resolveLayer(raw, unit), project), project);
       const cache = this.cacheFor(layer.id);
       const dKey = this.densityKeyFor(layer);
       const pKey = this.pointsKeyFor(layer, project.canvas.width, project.canvas.height, quality);
@@ -383,6 +384,17 @@ export class Engine {
    * render, and putting it on the prefilter means the density key changes for
    * every sibling the moment one changes — nothing has to remember to tell them.
    */
+  /**
+   * A screen that follows another is generated at the angle it resolves to,
+   * and that angle — not the offset — is what goes into its points key, so
+   * turning the reference regenerates every screen that follows it.
+   */
+  private withScreenAngle(layer: Layer, project: Project): Layer {
+    const d = layer.distribution;
+    if (d.algo !== 'halftone' || !d.angleFrom) return layer;
+    return { ...layer, distribution: { ...d, angle: screenAngle(layer, project.layers), angleFrom: undefined } };
+  }
+
   private withCompetitors(layer: Layer, project: Project): Layer {
     if (layer.prefilter.channel !== 'nearest') return layer;
     const own = layer.prefilter.ink ?? layer.color.color;
@@ -469,7 +481,7 @@ export class Engine {
 
     for (const raw of project.layers) {
       if (!raw.visible || raw.opacity <= 0) continue;
-      const layer = this.withCompetitors(resolveLayer(raw, unit), project);
+      const layer = this.withCompetitors(this.withScreenAngle(resolveLayer(raw, unit), project), project);
       const cache = this.cacheFor(layer.id);
 
       // A `below` layer reads the composite underneath it, so its density has to

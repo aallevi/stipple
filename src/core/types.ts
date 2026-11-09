@@ -134,8 +134,13 @@ export type HalftoneParams = {
    * writes the lines-per-inch reading beside it, at the current print size.
    */
   cells: number;
-  /** Screen rotation in degrees. */
+  /**
+   * Screen rotation in degrees from horizontal — or, when `angleFrom` is set,
+   * the offset from that screen's angle. See `core/angles.ts`.
+   */
   angle: number;
+  /** Another halftone layer this screen's angle is measured from; absent for absolute. */
+  angleFrom?: string;
   /** Grid geometry. */
   lattice: 'square' | 'hex' | 'line';
   toneRange: [number, number];

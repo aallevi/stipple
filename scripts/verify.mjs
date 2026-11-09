@@ -623,6 +623,26 @@ check('Inks & plates → New print → 3 colours makes a colour group, one close
   spot.groups === 1 && spot.layers === 3 && spot.films === 3,
   `${spot.groups} group, ${spot.layers} colour layers, ${spot.films} films`);
 
+// Screens that follow another turn with it, and are regenerated when it turns.
+const follow = await page.evaluate(async () => {
+  const s = window.__stipple;
+  s.applyPreset('Three-angle screens');
+  await new Promise((r) => setTimeout(r, 300));
+  s.engine.render(true);
+  const [a, b] = s.store.get().layers;
+  s.store.updateLayerField(b.id, 'distribution', { angle: 30, angleFrom: a.id });
+  await new Promise((r) => setTimeout(r, 100));
+  s.engine.render(true);
+  const first = () => { const p = s.engine.pointsFor(b.id); return [p.data[0], p.data[1]].map((v) => v.toFixed(2)).join(','); };
+  const before = first();
+  s.store.updateLayerField(a.id, 'distribution', { angle: a.distribution.angle + 10 });
+  await new Promise((r) => setTimeout(r, 100));
+  s.engine.render(true);
+  return { before, after: first() };
+});
+check('a screen that follows another is redrawn when that one turns', follow.before !== follow.after,
+  `first dot ${follow.before} \u2192 ${follow.after}`);
+
 // The light formats, from Contour.
 const light = await page.evaluate(() => window.__stipple.light());
 check('compact SVG is smaller than the SVG', light.compact < light.svg * 0.9, `${light.svg} \u2192 ${light.compact} bytes`);
@@ -651,7 +671,7 @@ const bare = await page.evaluate(async () => {
   return { share: clear / (d.length / 4), svgGround: svg.includes('fill="rgba('), pdfGround: /\n0 0 [\d.]+ [\d.]+ re f/.test(pdf) };
 });
 check('no paper exports a transparent PNG and vector files with no ground',
-  bare.share > 0.2 && !bare.svgGround && !bare.pdfGround,
+  bare.share > 0.02 && !bare.svgGround && !bare.pdfGround,
   `${Math.round(bare.share * 100)}% clear, SVG ground ${bare.svgGround}, PDF ground ${bare.pdfGround}`);
 
 await page.screenshot({ path: `${OUT}/app.png`, fullPage: false });

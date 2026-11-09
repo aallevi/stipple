@@ -25,6 +25,11 @@ export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffe
   // over a bounding radius and rotate each site back.
   const diag = Math.ceil(Math.hypot(width, height) / cell) + 2;
   const half = Math.ceil(diag / 2);
+  // Rows sit closer than a cell on a hexagonal lattice, so it needs more of
+  // them to reach as far. With the square count, a hex screen turned towards
+  // the long side of a wide picture ran out of rows before the ends.
+  const rowPitch = p.lattice === 'hex' ? Math.sqrt(3) / 2 : 1;
+  const rows = Math.ceil(half / rowPitch);
   const cx = width / 2;
   const cy = height / 2;
 
@@ -35,7 +40,7 @@ export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffe
 
   const estimate = Math.min(
     ctx.maxPoints,
-    Math.ceil(diag * (diag / colStep)) + 16,
+    Math.ceil((2 * rows + 1) * (diag / colStep)) + 16,
   );
   const { write } = allocPoints(estimate);
 
@@ -45,11 +50,11 @@ export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffe
   // footprint rather than covering a smaller one, so the radius does not change.
   const areaRadius = cell * 0.5;
 
-  for (let j = -half; j <= half; j++) {
+  for (let j = -rows; j <= rows; j++) {
     // Hex offsets alternate rows by half a cell, giving the denser, less grid-like
     // packing used for stochastic-leaning screens.
     const stagger = p.lattice === 'hex' && (Math.abs(j) & 1) === 1 ? 0.5 : 0;
-    const rowY = j * cell * (p.lattice === 'hex' ? 0.866 : 1);
+    const rowY = j * cell * rowPitch;
 
     for (let i = -half; i <= half; i += colStep) {
       const localX = (i + stagger) * cell;

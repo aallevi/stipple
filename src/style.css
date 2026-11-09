@@ -154,6 +154,10 @@ select:hover { background: var(--hover); }
 .paper-seg.on { background: var(--accent); color: var(--accent-text); }
 .paper-chip { width: 11px; height: 11px; border: 1px solid var(--line); flex: 0 0 auto; }
 .paper-chip.none { background: repeating-conic-gradient(#fff 0 25%, #c9c9c9 0 50%) 0 0 / 6px 6px; }
+/* `when` hides a control with the hidden attribute, which a row's own display
+   (grid, flex) would otherwise override. */
+.section-body > [hidden] { display: none !important; }
+.angle-actions { display: flex; gap: var(--gap); justify-content: flex-end; flex-wrap: wrap; }
 .light-select { width: auto; min-width: 0; max-width: 84px; }
 
 /* -- layout -------------------------------------------------------------- */

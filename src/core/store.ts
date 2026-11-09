@@ -1,6 +1,7 @@
 import type { Layer, Project, ShapeDef, LayerGroup } from './types';
 import { defaultProject, normaliseProject } from './defaults';
 import { groupSpan, tidyGroups } from './groups';
+import { releaseFollowers } from './angles';
 
 /**
  * How much work a change forces the engine to redo. Higher subsumes lower.
@@ -36,7 +37,7 @@ const LAYER_OWN: Partial<Record<keyof Layer, true | string[]>> = {
   color: true,
   groupId: true,
   prefilter: ['channel', 'ink', 'undercolor', 'nearestSet', 'nearestPaperColor', 'nearestPicked', 'nearestBand'],
-  distribution: ['angle', 'seed'],
+  distribution: ['angle', 'angleFrom', 'seed'],
 };
 
 const FIELD_DIRTY: Record<keyof Layer, Dirty> = {
@@ -377,6 +378,7 @@ export class Store {
     const idx = this.project.layers.findIndex((l) => l.id === id);
     if (idx < 0) return;
     this.commit(`remove:${id}`);
+    releaseFollowers(this.project.layers, id);
     this.project.layers.splice(idx, 1);
     tidyGroups(this.project);
     this.pending.structural = true;

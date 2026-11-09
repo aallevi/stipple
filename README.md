@@ -144,6 +144,15 @@ Groups are folders in the layer list. Select the folder to edit all its layers t
 that one. Fold, hide, drag and duplicate a group as one; drop a layer between two of its
 layers to put it in, drag it out to take it out, and *⇱* dissolves the folder.
 
+### Screen angles
+
+A halftone's angle is absolute (0° is horizontal) or, with *Angle from*, an exact offset
+from another screen, which it then turns with. *Others follow this screen* anchors a set
+on the selected screen, keeping every angle as it is; *Spread evenly* puts them at equal
+steps across one turn of the lattice. The readout gives each screen's real angle and its
+distance from the others, folded by the lattice: a square screen repeats every 90°, a
+hexagonal one every 60°, a line screen every 180°.
+
 ### Shortcuts
 
 | Key | Action |
