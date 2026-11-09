@@ -209,6 +209,8 @@ function mimeFor(name: string): string {
   if (name.endsWith('.svg')) return 'image/svg+xml';
   if (name.endsWith('.pdf')) return 'application/pdf';
   if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.webp')) return 'image/webp';
+  if (name.endsWith('.svgz')) return 'image/svg+xml';
   if (name.endsWith('.json')) return 'application/json';
   return 'application/octet-stream';
 }

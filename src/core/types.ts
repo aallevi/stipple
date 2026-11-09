@@ -149,6 +149,21 @@ export type DistributionAlgo = DistributionParams['algo'];
 // Layers
 // ---------------------------------------------------------------------------
 
+/** A curve handle, input to output, both 0..1. */
+export type CurvePoint = { x: number; y: number };
+
+export type ChannelCurves = { r: CurvePoint[]; g: CurvePoint[]; b: CurvePoint[] };
+
+export type Levels = {
+  /** Input black and white points, 0..1. Everything outside clips. */
+  inBlack: number;
+  inWhite: number;
+  /** Midtone gamma, 0.1..10. Above 1 brightens; 1 is neutral. */
+  gamma: number;
+  outBlack: number;
+  outWhite: number;
+};
+
 export type Prefilter = {
   brightness: number; // -1..1
   contrast: number;   // -1..1
@@ -157,6 +172,19 @@ export type Prefilter = {
   blur: number;
   sharpen: number;    // 0..1
   invert: boolean;
+  /**
+   * Levels on the measured tone, after blur, brightness and contrast. Absent
+   * means neutral, which is also what every project saved before it reads as.
+   */
+  levels?: Levels;
+  /** The tone curve, after levels — what the curve editor's Tone tab draws. */
+  curve?: CurvePoint[];
+  /**
+   * Curves on the picture's red, green and blue, applied *before* the layer
+   * measures anything. For a tone layer they reweight what counts as dark; for
+   * a plate or a closest-colour layer they move what the ink catches.
+   */
+  curves?: ChannelCurves;
   /**
    * What this layer measures. `luma` is overall tone — the default, and what a
    * single-colour stipple wants. `ink` measures how much of one specific ink the

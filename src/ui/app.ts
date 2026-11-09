@@ -4,6 +4,7 @@ import type { Project } from '../core/types';
 import { exportPDF } from '../export/pdf';
 import { exportPlates, planPlates } from '../export/plates';
 import { exportPNG } from '../export/png';
+import { exportCompactSVG, exportSVGZ, exportWebP } from '../export/light';
 import { estimatePoints, exportSVG, WARN_POINTS } from '../export/svg';
 import { decodeImage } from '../image/loader';
 import type { ImageSource } from '../image/density';
@@ -21,6 +22,15 @@ import { ShapesPanel } from './shapes';
 import { PRESETS } from './presets';
 import markSvg from '../../assets/brand/mark.svg?raw';
 import { formatLength } from './units';
+
+type LightKind = 'compact' | 'svgz' | 'webp';
+
+/** The light formats, as the More\u2026 menu and the phone's export menu list them. */
+const LIGHT: [LightKind, string][] = [
+  ['compact', 'Compact SVG \u2014 the same vector, rounded and tightened'],
+  ['svgz', 'SVGZ \u2014 compact SVG, gzipped: the lightest vector'],
+  ['webp', 'WebP \u2014 lossless pixels, far lighter than PNG'],
+];
 
 /**
  * Wires the store, the engine and the panels together, and owns the render loop.
@@ -110,6 +120,7 @@ export class App {
         sec?.classList.remove('collapsed');
         this.inks.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       },
+      (layerId) => this.engine.densityOf(layerId),
     );
     this.inks = new InksPanel(this.store, this.interaction, {
       getSource: () => this.engine.sourceImage,
@@ -247,6 +258,7 @@ export class App {
           button('PNG', () => void this.doExport('png'), '', 'Export a raster image at the document resolution'),
           button('SVG', () => void this.doExport('svg'), '', 'Export vector geometry'),
           button('PDF', () => void this.doExport('pdf'), '', 'Export a print-ready vector PDF'),
+          this.lightMenu(),
         button('Plates', () => void this.doExportPlates(), '',
           'One black-on-white film per ink, plus a colour proof — for screenprinting'),
         ),
@@ -284,6 +296,7 @@ export class App {
       ['svg', 'SVG \u2014 vector drawing, sharp at any size', () => void this.doExport('svg')],
       ['pdf', 'PDF \u2014 vector, print-ready at the document\u2019s size', () => void this.doExport('pdf')],
       ['plates', 'Plates \u2014 one black film per ink, for burning screens', () => void this.doExportPlates()],
+      ...LIGHT.map(([kind, label]): [string, string, () => void] => [kind, label, () => void this.doExport(kind)]),
     ];
     sel.append(h('option', { value: '' }, 'Export\u2026'));
     for (const [value, label] of entries) sel.append(h('option', { value }, label));
@@ -291,6 +304,62 @@ export class App {
       const entry = entries.find(([v]) => v === sel.value);
       sel.value = '';
       entry?.[2]();
+    });
+    return sel;
+  }
+
+  /**
+   * The paper in one click: the usual stocks and None, with whichever is
+   * current lit. From Contour. White is the printable sheet; None leaves the
+   * PNG transparent and the SVG and PDF without a ground, for placing the
+   * drawing over something else. None keeps the paper's colour underneath, so
+   * a spot set that leaves the paper unprinted still knows what it is leaving.
+   */
+  private paperChoices(): Control {
+    const PAPERS: { label: string; rgb: [number, number, number] | null; title: string }[] = [
+      { label: 'White', rgb: [1, 1, 1], title: 'White paper \u2014 the printable sheet' },
+      { label: 'Cream', rgb: [0.96, 0.93, 0.85], title: 'Warm off-white stock' },
+      { label: 'Kraft', rgb: [0.78, 0.66, 0.5], title: 'Brown kraft paper' },
+      { label: 'Grey', rgb: [0.62, 0.62, 0.6], title: 'Mid-grey stock' },
+      { label: 'Black', rgb: [0.07, 0.07, 0.08], title: 'Black paper: print light inks on it' },
+      { label: 'None', rgb: null, title: 'No paper: a transparent PNG, and SVG and PDF with no ground' },
+    ];
+    const is = (p: (typeof PAPERS)[number], bg: readonly number[]): boolean => (p.rgb === null
+      ? bg[3] <= 0.004
+      : bg[3] > 0.996 && p.rgb.every((v, i) => Math.abs(v - bg[i]) < 0.004));
+    const segs = PAPERS.map((p) => {
+      const chip = h('span', { class: `paper-chip${p.rgb ? '' : ' none'}` });
+      if (p.rgb) chip.style.background = `rgb(${p.rgb.map((v) => Math.round(v * 255)).join(',')})`;
+      const b = h('button', { class: 'paper-seg', type: 'button', title: p.title }, chip, p.label) as HTMLButtonElement;
+      b.addEventListener('click', () => {
+        const bg = this.store.get().canvas.background;
+        this.store.updateCanvas({ background: p.rgb ? [...p.rgb, 1] : [bg[0], bg[1], bg[2], 0] });
+      });
+      return b;
+    });
+    return {
+      el: h('div', { class: 'ctl ctl-paper' },
+        h('span', { class: 'ctl-label', title: 'The sheet the drawing is on' }, 'Paper'),
+        h('div', { class: 'paper-choices' }, ...segs)),
+      sync: () => {
+        const bg = this.store.get().canvas.background;
+        segs.forEach((b, i) => b.classList.toggle('on', is(PAPERS[i], bg)));
+      },
+    };
+  }
+
+  /** The light formats, one menu beside the buttons rather than three more of them. */
+  private lightMenu(): HTMLElement {
+    const sel = h('select', {
+      class: 'light-select', 'aria-label': 'More export formats',
+      title: 'Lighter files: compact SVG, SVGZ, lossless WebP',
+    }) as HTMLSelectElement;
+    sel.append(h('option', { value: '' }, 'More\u2026'));
+    for (const [value, label] of LIGHT) sel.append(h('option', { value }, label));
+    sel.addEventListener('change', () => {
+      const kind = sel.value as LightKind;
+      sel.value = '';
+      if (kind) void this.doExport(kind);
     });
     return sel;
   }
@@ -485,6 +554,7 @@ export class App {
         get: () => this.store.get().canvas.background,
         set: (v) => this.store.updateCanvas({ background: v }),
       }),
+      this.paperChoices(),
     ];
 
     const sec = section('Document', controls, true, [apply],
@@ -950,10 +1020,21 @@ export class App {
     }
   }
 
-  private async doExport(kind: 'png' | 'svg' | 'pdf'): Promise<void> {
+  private async doExport(kind: 'png' | 'svg' | 'pdf' | LightKind): Promise<void> {
     const project = this.store.get();
+    const kb = (n: number): string => `${Math.max(1, Math.round(n / 1024)).toLocaleString()} KB`;
     try {
       this.engine.prepareForExport();
+      if (kind === 'webp') {
+        this.notify('Rendering WebP\u2026');
+        const bytes = await exportWebP(this.engine, project, (done, total) =>
+          this.notify(`Rendering WebP\u2026 tile ${done}/${total}`));
+        if (await saveFile(bytes, 'stipple.webp', [{ name: 'WebP', extensions: ['webp'] }])) {
+          const { width: pw, height: ph } = project.canvas;
+          this.notify(`Exported WebP at ${pw}\u00d7${ph}, lossless \u2014 ${kb(bytes.length)}`);
+        }
+        return;
+      }
       if (kind === 'png') {
         // 1:1. A canvas pixel is already 1/dpi of an inch, so the document's own
         // pixel dimensions *are* its print resolution — scaling by dpi/96 on top
@@ -978,7 +1059,18 @@ export class App {
         if (!ok) return;
       }
 
-      if (kind === 'svg') {
+      if (kind === 'compact') {
+        const full = exportSVG(this.engine, project).length;
+        const text = exportCompactSVG(this.engine, project);
+        if (await saveFile(text, 'stipple.svg', [{ name: 'SVG', extensions: ['svg'] }])) {
+          this.notify(`Exported compact SVG \u2014 ${kb(text.length)}, ${Math.round((1 - text.length / full) * 100)}% smaller than the full SVG`);
+        }
+      } else if (kind === 'svgz') {
+        const bytes = await exportSVGZ(this.engine, project);
+        if (await saveFile(bytes, 'stipple.svgz', [{ name: 'SVGZ', extensions: ['svgz'] }])) {
+          this.notify(`Exported SVGZ \u2014 ${kb(bytes.length)} (${count.toLocaleString()} points)`);
+        }
+      } else if (kind === 'svg') {
         const svg = exportSVG(this.engine, project);
         await saveFile(svg, 'stipple.svg', [{ name: 'SVG', extensions: ['svg'] }]);
         this.notify(`Exported SVG (${count.toLocaleString()} points)`);
@@ -1113,6 +1205,7 @@ export class App {
       this.frameTimes.push(dt);
       if (this.frameTimes.length > 30) this.frameTimes.shift();
     }
+    this.inspector.frame();
     this.updateHUD();
     this.updateProgress();
     this.placeSplit();

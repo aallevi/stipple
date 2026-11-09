@@ -1,5 +1,6 @@
 import { bandShare, nearestShare, oklab } from '../core/color';
 import type { Prefilter } from '../core/types';
+import { channelLUTs, toneHistogram, toneMapper } from './curves';
 
 /** Decoded source pixels. Kept as raw RGBA so workers can transfer it cheaply. */
 export type ImageSource = {
@@ -23,6 +24,13 @@ export class DensityMap {
   /** Box-filtered mip chain for cheap area averages (halftone cells). */
   private mips: { data: Float32Array; w: number; h: number }[] = [];
   private gradient: Float32Array | null = null;
+  /**
+   * The tones going into levels and the curve, and the tones that come out of
+   * the whole prefilter — what the curve editor draws behind itself, and what
+   * the tone windows are cut from. Set by `fromSource`.
+   */
+  toneIn: Uint32Array = new Uint32Array(256);
+  toneOut: Uint32Array = new Uint32Array(256);
 
   constructor(
     readonly width: number,
@@ -54,10 +62,17 @@ export class DensityMap {
     // an even field of dots, with lightness left entirely to the ink each one
     // takes. Grades still apply on top, so the layer stays adjustable.
 
+    const rgbLut = channelLUTs(f.curves);
+
     for (let i = 0; i < n; i++) {
-      const r = rgba[i * 4] / 255;
-      const g = rgba[i * 4 + 1] / 255;
-      const b = rgba[i * 4 + 2] / 255;
+      let r = rgba[i * 4] / 255;
+      let g = rgba[i * 4 + 1] / 255;
+      let b = rgba[i * 4 + 2] / 255;
+      if (rgbLut) {
+        r = rgbLut[0][rgba[i * 4]];
+        g = rgbLut[1][rgba[i * 4 + 1]];
+        b = rgbLut[2][rgba[i * 4 + 2]];
+      }
       // `lum` is tone, where 0 is dark and gets the most ink. A separation
       // measures coverage, which runs the other way, so it is inverted here and
       // every downstream rule — tone range, size ramp, masks — keeps working
@@ -87,10 +102,21 @@ export class DensityMap {
       }
     }
 
+    // Levels and the curve come last among the grades, so the histogram the
+    // curve editor draws is the one these tones actually have — blurred,
+    // brightened and contrasted already — and a handle placed on a peak lands
+    // on the tones in that peak.
+    const toneIn = toneHistogram(lum);
+    const map = toneMapper(f);
+    if (map) for (let i = 0; i < n; i++) lum[i] = map(lum[i]);
+
     if (f.sharpen > 0) lum = unsharp(lum, width, height, f.sharpen, pixelScale);
     if (f.invert) for (let i = 0; i < n; i++) lum[i] = 1 - lum[i];
 
-    return new DensityMap(width, height, lum, rgba);
+    const out = new DensityMap(width, height, lum, rgba);
+    out.toneIn = toneIn;
+    out.toneOut = toneHistogram(lum);
+    return out;
   }
 
   /** Bilinear luminance lookup in pixel coordinates. */

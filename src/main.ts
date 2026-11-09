@@ -18,6 +18,22 @@ try {
         (await import('./export/png')).exportPNG(app.debug.engine, app.debug.store.get(), scale),
       exportPlates: async () =>
         (await import('./export/plates')).exportPlates(app.debug.engine, app.debug.store.get(), { baseName: 'verify' }),
+      light: async () => {
+        const { exportCompactSVG, exportSVGZ, exportWebP } = await import('./export/light');
+        const { exportSVG } = await import('./export/svg');
+        const { exportPNG } = await import('./export/png');
+        const e = app.debug.engine;
+        const p = app.debug.store.get();
+        const full = exportSVG(e, p);
+        const compact = exportCompactSVG(e, p);
+        const svgz = await exportSVGZ(e, p);
+        const back = await new Response(new Blob([svgz.slice().buffer as ArrayBuffer]).stream()
+          .pipeThrough(new DecompressionStream('gzip'))).text();
+        const png = (await exportPNG(e, p, 1)).size;
+        const webp = await exportWebP(e, p);
+        const riff = String.fromCharCode(...webp.slice(0, 4)) + String.fromCharCode(...webp.slice(8, 12));
+        return { svg: full.length, compact: compact.length, compactText: compact, svgz: svgz.length, roundTrip: back === compact, png, webp: webp.length, riff };
+      },
       presets: async () => (await import('./ui/presets')).PRESETS.map((p) => p.name),
       importShape: async (name: string, bytes: Uint8Array) => {
         const { importShape } = await import('./shape/import');

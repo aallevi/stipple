@@ -60,9 +60,11 @@ export function exportPDF(engine: Engine, project: Project): PDFResult {
     return i;
   };
 
-  // Background
-  content.push(`${f(background[0])} ${f(background[1])} ${f(background[2])} rg`);
-  content.push(`0 0 ${f(pw)} ${f(ph)} re f`);
+  // Background — left out on no paper, so the page is whatever it is printed on.
+  if (background[3] > 0.004) {
+    content.push(`${f(background[0])} ${f(background[1])} ${f(background[2])} rg`);
+    content.push(`0 0 ${f(pw)} ${f(ph)} re f`);
+  }
 
   // Lengths are stored relative to the document; resolve the whole stack once.
   for (const layer of resolvedLayers(project)) {

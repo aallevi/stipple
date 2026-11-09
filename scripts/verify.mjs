@@ -623,6 +623,37 @@ check('Inks & plates → New print → 3 colours makes a colour group, one close
   spot.groups === 1 && spot.layers === 3 && spot.films === 3,
   `${spot.groups} group, ${spot.layers} colour layers, ${spot.films} films`);
 
+// The light formats, from Contour.
+const light = await page.evaluate(() => window.__stipple.light());
+check('compact SVG is smaller than the SVG', light.compact < light.svg * 0.9, `${light.svg} \u2192 ${light.compact} bytes`);
+check('SVGZ is the compact SVG gzipped, and smaller still', light.roundTrip && light.svgz < light.compact / 2, `${light.svgz} bytes`);
+check('WebP is real lossless WebP and lighter than the PNG', light.riff === 'RIFFWEBP' && light.webp < light.png, `${light.png} \u2192 ${light.webp} bytes`);
+
+// No paper: a transparent PNG whose dots are not darkened at their edges, and
+// vector files with no ground.
+const bare = await page.evaluate(async () => {
+  const s = window.__stipple;
+  const was = s.store.get().canvas.background;
+  s.store.updateCanvas({ background: [1, 1, 1, 0] });
+  await new Promise((r) => setTimeout(r, 300));
+  s.engine.render(true);
+  const blob = await s.exportPNG(1);
+  const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none' });
+  const c = new OffscreenCanvas(bmp.width, bmp.height);
+  const g = c.getContext('2d');
+  g.drawImage(bmp, 0, 0);
+  const d = g.getImageData(0, 0, bmp.width, bmp.height).data;
+  let clear = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] === 0) clear++;
+  const svg = await s.exportSVG();
+  const pdf = new TextDecoder('latin1').decode((await s.exportPDF()).bytes);
+  s.store.updateCanvas({ background: was });
+  return { share: clear / (d.length / 4), svgGround: svg.includes('fill="rgba('), pdfGround: /\n0 0 [\d.]+ [\d.]+ re f/.test(pdf) };
+});
+check('no paper exports a transparent PNG and vector files with no ground',
+  bare.share > 0.2 && !bare.svgGround && !bare.pdfGround,
+  `${Math.round(bare.share * 100)}% clear, SVG ground ${bare.svgGround}, PDF ground ${bare.pdfGround}`);
+
 await page.screenshot({ path: `${OUT}/app.png`, fullPage: false });
 await browser.close();
 

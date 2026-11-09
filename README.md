@@ -94,17 +94,21 @@ npm run install-app    # macOS: build and copy into /Applications (add -- --laun
    *Three-angle screens*, *Contour lines* and others.
 3. **Set the document** (top of the sidebar) to the size and dpi you'll print at, in
    pixels and millimetres with a ratio lock. *2×* upscales: the same print, every dot
-   drawn with twice the pixels.
+   drawn with twice the pixels. *Paper* sets the sheet in one click — White, Cream,
+   Kraft, Grey, Black, or None for a transparent PNG and vector files with no ground.
 4. **Make a print** in *Inks & plates*, if you're printing in several inks (below).
 5. **Work down the sidebar.** The selected layer's sections follow the signal: *Source →
    Image adjust → Measure → Tone mask → Distribution → Shape → Size → Rotation →
    Colour → Transform → Blend*. A setting only affects the sections below it, and the
-   ⓘ buttons explain the ones whose names don't say enough.
+   ⓘ buttons explain the ones whose names don't say enough. *Image adjust → Curves*
+   has a tone curve with levels on its rails and R/G/B curves, drawn over the layer's
+   own histogram; *Tone range* and *Keep tones* are two handles on that histogram.
 6. **Compare** with the photo beside *Fit*: *Original*, *Split* (drag the orange
    divider), *Inks* — the picture in just your print's inks, flat, or in its own eight
    colours before there is a print — or *Under* to see it faintly through the paper.
    It is only a view and never appears in an export.
-7. **Export** to PNG, SVG or PDF, or **Plates** for screen printing. Heavy changes show
+7. **Export** to PNG, SVG or PDF, or **Plates** for screen printing. *More…* has lighter
+   files: compact SVG, SVGZ (gzipped, the lightest vector) and lossless WebP. Heavy changes show
    a progress bar over the last drawing instead of freezing the window.
 
 ### From photo to screens
@@ -164,7 +168,7 @@ slider, and use the plain strip down the right edge to scroll past anything.
 |---|---|
 | Images in | PNG, JPEG, WebP, GIF, BMP, plus TIFF in the desktop app |
 | Shapes in | SVG, or PNG/WebP/GIF with transparency |
-| Out | PNG at the document resolution, SVG, PDF, SVG plates |
+| Out | PNG at the document resolution, SVG, PDF, SVG plates; under *More…*, compact SVG, SVGZ and lossless WebP |
 | Projects | *Save* and *Load*: `.stipple` in the desktop app, `.stipple.json` in a browser |
 
 ---

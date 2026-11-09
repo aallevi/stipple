@@ -91,8 +91,9 @@ export function exportSVG(engine: Engine, project: Project, opts: ExportOptions 
   );
   // A film positive is read as ink where it is black, so the ground has to be
   // paper-white regardless of what the document is set to.
-  const ground = mono ? '#ffffff' : rgbaCss(background);
-  out.push(`<rect x="${-m}" y="${-m}" width="${width + 2 * m}" height="${height + 2 * m}" fill="${ground}"/>`);
+  // On no paper there is no ground at all, so the drawing places over anything.
+  const ground = mono ? '#ffffff' : background[3] > 0.004 ? rgbaCss(background) : null;
+  if (ground) out.push(`<rect x="${-m}" y="${-m}" width="${width + 2 * m}" height="${height + 2 * m}" fill="${ground}"/>`);
 
   out.push('<defs>');
   for (const def of shapesUsed.values()) {

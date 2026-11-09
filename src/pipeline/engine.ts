@@ -853,7 +853,7 @@ export class Engine {
       other.bind();
       gl.readPixels(0, 0, tileW, tileH, gl.RGBA, gl.UNSIGNED_BYTE, px);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      return flipRows(px, tileW, tileH);
+      return unpremultiply(flipRows(px, tileW, tileH));
     } finally {
       a.dispose();
       b.dispose();
@@ -918,6 +918,11 @@ export class Engine {
     return this.caches.get(layerId)?.points ?? null;
   }
 
+  /** What a layer measured, last time it was built — for the histograms in the inspector. */
+  densityOf(layerId: string): DensityMap | null {
+    return this.caches.get(layerId)?.density ?? null;
+  }
+
   atlasSlot(shapeId: string) {
     return this.atlas.get(shapeId);
   }
@@ -943,6 +948,23 @@ export class Engine {
 }
 
 /** `readPixels` returns bottom-up; images everywhere else are top-down. */
+/**
+ * The compositor works premultiplied; a PNG, and `ImageData`, are straight
+ * alpha. On paper every pixel is opaque and this changes nothing — but on no
+ * paper, a dot's soft edge read back premultiplied comes out as a dark ring.
+ */
+function unpremultiply(px: Uint8ClampedArray<ArrayBuffer>): Uint8ClampedArray<ArrayBuffer> {
+  for (let i = 0; i < px.length; i += 4) {
+    const a = px[i + 3];
+    if (a === 255 || a === 0) continue;
+    const k = 255 / a;
+    px[i] = px[i] * k;
+    px[i + 1] = px[i + 1] * k;
+    px[i + 2] = px[i + 2] * k;
+  }
+  return px;
+}
+
 function flipRows(px: Uint8ClampedArray, w: number, h: number): Uint8ClampedArray<ArrayBuffer> {
   const out = new Uint8ClampedArray(px.length);
   const rowBytes = w * 4;

@@ -38,12 +38,42 @@ fn native_image_formats() -> Vec<String> {
         .collect()
 }
 
+/// RGBA pixels to lossless WebP, for the web view that cannot encode it.
+///
+/// WebKit's canvas hands back a PNG when asked for WebP, so the desktop app
+/// encodes here. The body is raw RGBA; `x-size` says `width height`.
+#[tauri::command]
+fn encode_webp(request: tauri::ipc::Request<'_>) -> Result<tauri::ipc::Response, String> {
+    let body = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes,
+        _ => return Err("encode_webp expects a raw body".into()),
+    };
+    let size = request
+        .headers()
+        .get("x-size")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing x-size")?;
+    let mut it = size.split_whitespace().map(|s| s.parse::<u32>());
+    let (w, h) = match (it.next(), it.next()) {
+        (Some(Ok(w)), Some(Ok(h))) => (w, h),
+        _ => return Err("bad x-size".into()),
+    };
+    if body.len() != (w as usize) * (h as usize) * 4 {
+        return Err("pixel data does not match the size".into());
+    }
+    let mut out = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut out)
+        .encode(body, w, h, image::ExtendedColorType::Rgba8)
+        .map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(out))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![decode_image, native_image_formats])
+        .invoke_handler(tauri::generate_handler![decode_image, native_image_formats, encode_webp])
         .run(tauri::generate_context!())
         .expect("error while running Stipple");
 }

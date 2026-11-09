@@ -19,6 +19,18 @@ export async function exportPNG(
   scale: number,
   onProgress?: ExportProgress,
 ): Promise<Blob> {
+  return encodeCanvas(await renderCanvas(engine, project, scale, onProgress), 'image/png');
+}
+
+export type ExportCanvas = OffscreenCanvas | HTMLCanvasElement;
+
+/** The whole stack drawn into one 2D canvas at `scale`, tile by tile. */
+export async function renderCanvas(
+  engine: Engine,
+  project: Project,
+  scale: number,
+  onProgress?: ExportProgress,
+): Promise<ExportCanvas> {
   engine.prepareForExport();
 
   const width = Math.max(1, Math.round(project.canvas.width * scale));
@@ -27,7 +39,7 @@ export async function exportPNG(
   const canvas = typeof OffscreenCanvas !== 'undefined'
     ? new OffscreenCanvas(width, height)
     : Object.assign(document.createElement('canvas'), { width, height });
-  const ctx = (canvas as OffscreenCanvas).getContext('2d') as
+  const ctx = (canvas as OffscreenCanvas).getContext('2d', { willReadFrequently: true }) as
     | OffscreenCanvasRenderingContext2D
     | CanvasRenderingContext2D;
 
@@ -52,13 +64,13 @@ export async function exportPNG(
     }
   }
 
-  if ('convertToBlob' in canvas) {
-    return (canvas as OffscreenCanvas).convertToBlob({ type: 'image/png' });
-  }
+  return canvas;
+}
+
+/** Encode a rendered canvas. `quality` 1 asks Chromium for lossless WebP. */
+export function encodeCanvas(canvas: ExportCanvas, type: string, quality?: number): Promise<Blob> {
+  if ('convertToBlob' in canvas) return canvas.convertToBlob({ type, quality });
   return new Promise((resolve, reject) => {
-    (canvas as HTMLCanvasElement).toBlob(
-      (b) => (b ? resolve(b) : reject(new Error('PNG encoding failed'))),
-      'image/png',
-    );
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error(`${type} encoding failed`))), type, quality);
   });
 }

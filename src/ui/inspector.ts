@@ -7,10 +7,13 @@ import {
   type JitteredParams, type Layer, type RGBA, type VoronoiParams,
 } from '../core/types';
 import {
-  button, colorControl, group, h, hint, paletteControl, raw, rangeControl, readout, section,
+  button, colorControl, group, h, hint, paletteControl, raw, readout, section,
   select, slider, toggle, when, type Control, type Interaction,
 } from './controls';
 import { inkName } from '../export/plates';
+import { IDENTITY, NEUTRAL_LEVELS } from '../image/curves';
+import type { DensityMap } from '../image/density';
+import { curveEditor, histoRange, rgbHistogram } from './curves';
 import { INK_SETS } from './separations';
 import { shapeParamControls } from './shapeparams';
 import { formatSpan, lengthSlider } from './units';
@@ -65,7 +68,28 @@ export class Inspector {
     private makeSpot: (layerId: string) => void = () => {},
     /** Bring the Inks & plates panel into view. */
     private openInks: () => void = () => {},
+    /** What a layer last measured, for the histograms under the curve and the tone windows. */
+    private getDensity: (layerId: string) => DensityMap | null = () => null,
   ) {}
+
+  /** Controls drawn over the layer's histogram, repainted when the engine rebuilds it. */
+  private histoControls: Control[] = [];
+  private shownDensity: DensityMap | null = null;
+
+  /**
+   * Called every frame. The engine builds a layer's density a frame or more
+   * after the edit that changed it, so the histograms cannot be redrawn from
+   * the store's change alone; this repaints them when the map they were drawn
+   * from has been replaced, and costs one comparison when it has not.
+   */
+  frame(): void {
+    const id = this.builtFor.split(':')[0];
+    if (!id || !this.store.layer(id)) return;
+    const d = this.getDensity(id);
+    if (d === this.shownDensity) return;
+    this.shownDensity = d;
+    for (const c of this.histoControls) c.sync();
+  }
 
   /** Rebuild if the layer identity or an option that changes the form did. */
   update(layerId: string | null): void {
@@ -108,6 +132,10 @@ export class Inspector {
     const ia = this.interaction;
     const L = (): Layer => s.layer(id)!;
     const size = defaultSize();
+    this.histoControls = [];
+    this.shownDensity = null;
+    const live = (c: Control): Control => this.live(c);
+    const tones = (): Uint32Array | null => this.tones(id);
     const rot = defaultRotation();
 
     const sections: Control[] = [
@@ -158,6 +186,35 @@ export class Inspector {
           get: () => L().prefilter.invert,
           set: (v) => s.editLayerField(id, 'prefilter', { invert: v }),
         }),
+        group('Curves'),
+        live(curveEditor({
+          interaction: ia,
+          get: (ch) => (ch === 'tone' ? L().prefilter.curve : L().prefilter.curves?.[ch]) ?? IDENTITY.map((p) => ({ ...p })),
+          set: (ch, points) => {
+            const f = L().prefilter;
+            if (ch === 'tone') s.editLayerField(id, 'prefilter', { curve: points });
+            else {
+              const flat = IDENTITY.map((p) => ({ ...p }));
+              const cur = f.curves ?? { r: flat, g: flat, b: flat };
+              s.editLayerField(id, 'prefilter', { curves: { ...cur, [ch]: points } });
+            }
+          },
+          levels: {
+            get: () => L().prefilter.levels ?? { ...NEUTRAL_LEVELS },
+            set: (patch) => s.editLayerField(id, 'prefilter', {
+              levels: { ...(L().prefilter.levels ?? NEUTRAL_LEVELS), ...patch },
+            }),
+          },
+          tones: () => {
+            const d = this.getDensity(id);
+            return d ? { in: d.toneIn, out: d.toneOut } : null;
+          },
+          channels: () => rgbHistogram(this.getSource()),
+        })),
+        hint('Click to add a point, drag to move it, double-click or alt-click to remove it. '
+          + 'On Tone, the rail below sets the black point, midtone and white point, the rail '
+          + 'at the left where black and white land; the dashed line is the two together. '
+          + 'The orange bars are the tones this layer ends up measuring.'),
       ], true),
 
       section('Measure', [
@@ -197,12 +254,15 @@ export class Inspector {
       ], layer.prefilter.channel !== 'ink' && layer.prefilter.channel !== 'nearest', [], 'What this layer responds to in what it reads, which decides where its dots go. Overall tone: dots where it is dark. One ink: dots where the picture needs that ink, as one plate of an overprinting separation. Closest colour: dots only where the picture is closer to this layer\u2019s colour than to any other colour in its group, so the colours of a group fit together like a puzzle and never print on top of each other. Nothing: dots evenly everywhere.'),
 
       section('Tone mask', [
-        rangeControl({
+        live(histoRange({
           label: 'Keep tones', interaction: ia,
           title: 'Dots are placed only where the source tone falls inside this window',
           get: () => L().mask.toneRange,
           set: (v) => s.editLayerField(id, 'mask', { toneRange: v }),
-        }),
+          histogram: tones,
+          feather: () => L().mask.feather,
+          inverted: () => L().mask.invert,
+        })),
         slider({
           label: 'Feather', min: 0, max: 0.5, step: 0.01, interaction: ia, reset: 0,
           title: 'Softens the edges of the tone window',
@@ -382,6 +442,17 @@ export class Inspector {
    * what happens inside its region, and a way to add a colour the automatic
    * sampling missed. Its competitors are its group — see `Engine.withCompetitors`.
    */
+  /** Register a control that draws the layer's histogram, so `frame` repaints it. */
+  private live(c: Control): Control {
+    this.histoControls.push(c);
+    return c;
+  }
+
+  /** The tones the layer finally measures — what its tone windows are cut from. */
+  private tones(id: string): Uint32Array | null {
+    return this.getDensity(id)?.toneOut ?? null;
+  }
+
   private nearestControls(id: string): Control[] {
     const s = this.store;
     const L = (): Layer => s.layer(id)!;
@@ -434,12 +505,13 @@ export class Inspector {
     });
 
     const tail = (withSeed: boolean): Control[] => [
-      rangeControl({
+      this.live(histoRange({
         label: 'Tone range', interaction: ia,
         title: 'Tones outside this window get no dots at all',
         get: () => L().distribution.toneRange,
         set: (v) => s.editLayerField(id, 'distribution', { toneRange: v } as never),
-      }),
+        histogram: () => this.tones(id),
+      })),
       toggle({
         label: 'Stipple the lights',
         title: 'Place dots in the highlights instead of the shadows',
