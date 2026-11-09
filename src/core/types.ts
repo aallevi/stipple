@@ -141,6 +141,13 @@ export type HalftoneParams = {
   angle: number;
   /** Another halftone layer this screen's angle is measured from; absent for absolute. */
   angleFrom?: string;
+  /**
+   * Where the screen sits: how far its grid is moved along its own rows and
+   * across them, in cells (one is a whole cell; 0.5 puts a dot where a gap
+   * was). Measured in the screen's own axes, so it means the same at any
+   * angle. Absent is [0, 0], the grid centred on the picture.
+   */
+  shift?: [number, number];
   /** Grid geometry. */
   lattice: 'square' | 'hex' | 'line';
   toneRange: [number, number];

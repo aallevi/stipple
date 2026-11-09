@@ -76,3 +76,48 @@ describe('a turned hexagonal screen', () => {
     }
   });
 });
+
+describe('a shifted screen', () => {
+  const w = 200;
+  const h = 200;
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+  const density = DensityMap.fromSource({ width: w, height: h, rgba },
+    { brightness: 0, contrast: 0, gamma: 1, blur: 0, sharpen: 0, invert: false });
+  const cell = 10;
+  const run = (angle: number, lattice: HalftoneParams['lattice'], shift?: [number, number]): [number, number][] => {
+    const pts = generateHalftone(
+      { algo: 'halftone', cells: h / cell, angle, lattice, toneRange: [0, 1], invertDensity: false, shift },
+      { density, width: w, height: h, unit: h, mask: defaultMask(), quality: 1, maxPoints: 1e6 },
+    );
+    return Array.from({ length: pts.count }, (_, i) => [pts.data[i * POINT_STRIDE], pts.data[i * POINT_STRIDE + 1]]);
+  };
+  const near = (pts: [number, number][], x: number, y: number): number =>
+    Math.min(...pts.map(([px, py]) => Math.hypot(px - x, py - y)));
+
+  it('moves the grid by the asked fraction of a cell, in the screen’s own axes', () => {
+    const angle = 30;
+    const t = (angle * Math.PI) / 180;
+    const base = run(angle, 'square');
+    const moved = run(angle, 'square', [0.5, 0.25]);
+    // Every dot of the moved screen is the unmoved one's, carried half a cell
+    // along the rows and a quarter across them.
+    const dx = 0.5 * cell * Math.cos(t) - 0.25 * cell * Math.sin(t);
+    const dy = 0.5 * cell * Math.sin(t) + 0.25 * cell * Math.cos(t);
+    const inner = moved.filter(([x, y]) => x > 20 && x < w - 20 && y > 20 && y < h - 20);
+    expect(inner.length).toBeGreaterThan(100);
+    for (const [x, y] of inner) expect(near(base, x - dx, y - dy)).toBeLessThan(1e-3);
+    // ...and half a cell puts the dots exactly between the old ones.
+    expect(near(base, inner[0][0], inner[0][1])).toBeGreaterThan(cell * 0.25);
+  });
+
+  it('lands on the same grid after a whole repeat, and still covers the picture', () => {
+    const key = (p: [number, number][]): string => p.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).sort().join(' ');
+    expect(key(run(15, 'square', [1, -1]))).toBe(key(run(15, 'square')));
+    expect(key(run(15, 'hex', [0, 2]))).toBe(key(run(15, 'hex')));
+    for (const shift of [[0.99, 0.99], [-0.99, -0.99]] as [number, number][]) {
+      const pts = run(45, 'hex', shift);
+      for (const [cx, cy] of [[0, 0], [w, 0], [0, h], [w, h]]) expect(near(pts, cx, cy)).toBeLessThan(cell * 1.5);
+    }
+  });
+});

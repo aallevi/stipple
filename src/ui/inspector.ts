@@ -622,6 +622,7 @@ export class Inspector {
           + `${lpi < 10 ? lpi.toFixed(1) : Math.round(lpi)} lpi at this print size`;
       }),
       ...this.angleControls(id),
+      ...this.shiftControls(id),
       select<'square' | 'hex' | 'line'>({
         label: 'Lattice',
         options: [
@@ -737,6 +738,34 @@ export class Inspector {
         button('Spread evenly', spread, 'sm',
           'This screen and the others at equal steps across one turn of the lattice, all following this one'),
       ))),
+    ];
+  }
+
+  /**
+   * Where a screen's grid sits, in cells along its rows and across them. Two
+   * plates at the same angle and lineature stop printing dot on dot when one is
+   * moved half a cell; and it is how a screen is lined up with a feature of the
+   * picture. In the screen's own axes, so it means the same at any angle.
+   */
+  private shiftControls(id: string): Control[] {
+    const s = this.store;
+    const ia = this.interaction;
+    const d = (): HalftoneParams => s.layer(id)!.distribution as HalftoneParams;
+    const shift = (): [number, number] => d().shift ?? [0, 0];
+    const axis = (i: 0 | 1, label: string, title: string): Control => slider({
+      label, min: -1, max: 1, step: 0.01, interaction: ia, reset: 0, title,
+      get: () => shift()[i],
+      set: (v) => {
+        const next: [number, number] = [...shift()];
+        next[i] = v;
+        s.editLayerField(id, 'distribution', { shift: next } as never);
+      },
+    });
+    return [
+      axis(0, 'Shift along', 'Moves the grid along its rows, in cells: 0.5 puts a dot where a gap was. '
+        + 'Turns with the screen'),
+      axis(1, 'Shift across', 'Moves the grid across its rows, in cells (rows, on a hexagonal screen). '
+        + 'Turns with the screen'),
     ];
   }
 

@@ -63,7 +63,7 @@ export class ShapesPanel {
     if (picked) await this.ingest(picked.name, picked.bytes);
   }
 
-  private async ingest(name: string, bytes: Uint8Array): Promise<void> {
+  async ingest(name: string, bytes: Uint8Array): Promise<void> {
     try {
       const { def, bitmap } = await importShape(name, bytes);
       if (bitmap) this.onBitmap(def.id, bitmap);

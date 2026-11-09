@@ -82,6 +82,12 @@ function browserPick(accept: string, multiple = false): Promise<PickedFile[]> {
   });
 }
 
+/** A file the desktop app was handed by path — a native drop. */
+export async function readPath(path: string): Promise<PickedFile> {
+  const f = await fs();
+  return { name: path.split('/').pop() ?? path, bytes: await f.readFile(path), path };
+}
+
 export async function openFile(
   filters: { name: string; extensions: string[] }[],
   /**

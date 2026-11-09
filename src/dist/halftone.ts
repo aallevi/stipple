@@ -23,7 +23,7 @@ export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffe
 
   // The rotated lattice must cover the canvas corners, so work in screen space
   // over a bounding radius and rotate each site back.
-  const diag = Math.ceil(Math.hypot(width, height) / cell) + 2;
+  const diag = Math.ceil(Math.hypot(width, height) / cell) + 4;
   const half = Math.ceil(diag / 2);
   // Rows sit closer than a cell on a hexagonal lattice, so it needs more of
   // them to reach as far. With the square count, a hex screen turned towards
@@ -32,6 +32,15 @@ export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffe
   const rows = Math.ceil(half / rowPitch);
   const cx = width / 2;
   const cy = height / 2;
+  // The screen's own position, in cells along and across its rows. Only the
+  // part within one repeat matters — a whole cell along, or a whole row across,
+  // lands on the same grid — so it is folded there, which also keeps it inside
+  // the cell of margin the bounds above leave. Hex rows alternate, so they
+  // repeat every second row.
+  const fold = (v: number, period: number): number => v - period * Math.round(v / period);
+  const [shiftAlong, shiftAcross] = p.shift ?? [0, 0];
+  const ox = fold(shiftAlong || 0, 1);
+  const oy = fold(shiftAcross || 0, p.lattice === 'hex' ? 2 : 1);
 
   // Every lattice puts one row of sites per cell; a line screen differs only in
   // packing its sites densely *along* the row, which is what turns a row of
@@ -54,10 +63,10 @@ export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffe
     // Hex offsets alternate rows by half a cell, giving the denser, less grid-like
     // packing used for stochastic-leaning screens.
     const stagger = p.lattice === 'hex' && (Math.abs(j) & 1) === 1 ? 0.5 : 0;
-    const rowY = j * cell * rowPitch;
+    const rowY = (j + oy) * cell * rowPitch;
 
     for (let i = -half; i <= half; i += colStep) {
-      const localX = (i + stagger) * cell;
+      const localX = (i + stagger + ox) * cell;
       const x = cx + localX * cos - rowY * sin;
       const y = cy + localX * sin + rowY * cos;
       if (x < 0 || x >= width || y < 0 || y >= height) continue;

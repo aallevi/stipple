@@ -153,6 +153,10 @@ steps across one turn of the lattice. The readout gives each screen's real angle
 distance from the others, folded by the lattice: a square screen repeats every 90°, a
 hexagonal one every 60°, a line screen every 180°.
 
+*Shift along* and *Shift across* move a screen's grid within its cell, in the screen's own
+axes: 0.5 along puts a dot where a gap was, so two plates at the same angle and ruling stop
+printing dot on dot. Like the angle, the shift belongs to each plate.
+
 ### Shortcuts
 
 | Key | Action |

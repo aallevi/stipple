@@ -643,6 +643,23 @@ const follow = await page.evaluate(async () => {
 check('a screen that follows another is redrawn when that one turns', follow.before !== follow.after,
   `first dot ${follow.before} \u2192 ${follow.after}`);
 
+// Shifting a screen redraws it, and the panel offers the two shift sliders.
+const shifted = await page.evaluate(async () => {
+  const s = window.__stipple;
+  const [a] = s.store.get().layers;
+  document.querySelector('.layer-list .layer-meta')?.click();
+  await new Promise((r) => setTimeout(r, 200));
+  const labels = [...document.querySelectorAll('.ctl-label')].map((e) => e.textContent);
+  const first = () => { const p = s.engine.pointsFor(a.id); return [p.data[0], p.data[1]].map((v) => v.toFixed(2)).join(','); };
+  const before = first();
+  s.store.updateLayerField(a.id, 'distribution', { shift: [0.5, 0] });
+  await new Promise((r) => setTimeout(r, 100));
+  s.engine.render(true);
+  return { before, after: first(), sliders: labels.includes('Shift along') && labels.includes('Shift across') };
+});
+check('shifting a screen moves its dots', shifted.before !== shifted.after, `first dot ${shifted.before} \u2192 ${shifted.after}`);
+check('the halftone panel has Shift along and Shift across', shifted.sliders);
+
 // The light formats, from Contour.
 const light = await page.evaluate(() => window.__stipple.light());
 check('compact SVG is smaller than the SVG', light.compact < light.svg * 0.9, `${light.svg} \u2192 ${light.compact} bytes`);

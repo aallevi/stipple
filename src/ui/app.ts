@@ -10,7 +10,7 @@ import { decodeImage } from '../image/loader';
 import type { ImageSource } from '../image/density';
 import { testCard } from '../image/testcard';
 import { Engine } from '../pipeline/engine';
-import { decodeNative, isTauri, openFile, saveFile, saveFiles, supportedImageExtensions, type PickedFile } from '../platform';
+import { decodeNative, isTauri, openFile, readPath, saveFile, saveFiles, supportedImageExtensions, type PickedFile } from '../platform';
 import { rasterBitmap } from '../shape/import';
 import { button, colorControl, h, raw, readout, section, select, slider, type Control, type Interaction, installTouchSliders } from './controls';
 import { InksPanel } from './inks';
@@ -960,10 +960,21 @@ export class App {
   }
 
   private bindDrop(): void {
+    if (isTauri()) {
+      void this.bindNativeDrop();
+      return;
+    }
     const stage = this.stage;
-    const isFiles = (e: DragEvent): boolean => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    // Anything that might be a picture: files, or a link to one — a browser
+    // tab or an image dragged out of a web page carries a URL, not a file.
+    const isDrop = (e: DragEvent): boolean => !!e.dataTransfer
+      && [...e.dataTransfer.types].some((t) => t === 'Files' || t === 'text/uri-list' || t === 'text/html');
+    // A drop that misses every target would otherwise navigate the tab to the
+    // file and throw the drawing away.
+    window.addEventListener('dragover', (e) => { if (isDrop(e)) e.preventDefault(); });
+    window.addEventListener('drop', (e) => { if (isDrop(e)) e.preventDefault(); });
     stage.addEventListener('dragover', (e) => {
-      if (!isFiles(e)) return;
+      if (!isDrop(e)) return;
       e.preventDefault();
       stage.classList.add('dropping');
     });
@@ -972,10 +983,60 @@ export class App {
     });
     stage.addEventListener('drop', (e) => {
       stage.classList.remove('dropping');
-      const file = e.dataTransfer?.files[0];
-      if (!file) return;
+      if (!e.dataTransfer) return;
       e.preventDefault();
-      void file.arrayBuffer().then((buf) => this.loadImage({ name: file.name, bytes: new Uint8Array(buf) }));
+      void droppedFile(e.dataTransfer).then((picked) => {
+        if (picked) void this.loadImage(picked);
+        else this.notify('Nothing to open in that drop — try the file itself');
+      }).catch((err: Error) => this.notify(`Could not open the drop: ${err.message}`));
+    });
+  }
+
+  /**
+   * In the desktop app the window takes file drops natively, by path.
+   *
+   * The web view's own HTML5 drop is unreliable for files dragged from other
+   * apps than the Finder — Eagle, and other libraries that hand over a file
+   * URL or a promise of one rather than a file — and in the shipped bundle it
+   * silently does nothing. The native drop gets the real path from whatever
+   * dragged it, and a TIFF arrives with the path the Rust decoder needs.
+   * It is routed by where it lands: on the Shape section it becomes a stamp,
+   * anywhere else the picture. (This is `dragDropEnabled` in tauri.conf.json;
+   * nothing in the page relies on HTML5 drag any more — the layer list moves
+   * by pointer events.)
+   */
+  private async bindNativeDrop(): Promise<void> {
+    const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+    const stage = this.stage;
+    const shapes = this.shapes.el;
+    // Typed as physical pixels, but macOS reports the drag location in points
+    // (wry passes AppKit's view coordinates through), which is CSS pixels here.
+    const mac = /Mac/i.test(navigator.userAgent);
+    const target = (pos: { x: number; y: number }): 'shape' | 'image' => {
+      const r = mac ? 1 : window.devicePixelRatio || 1;
+      const el = document.elementFromPoint(pos.x / r, pos.y / r);
+      return el && shapes.contains(el) ? 'shape' : 'image';
+    };
+    const show = (where: 'shape' | 'image' | null): void => {
+      stage.classList.toggle('dropping', where === 'image');
+      shapes.classList.toggle('drop-active', where === 'shape');
+    };
+    await getCurrentWebview().onDragDropEvent((event) => {
+      const p = event.payload;
+      if (p.type === 'enter' || p.type === 'over') show(target(p.position));
+      else if (p.type === 'leave') show(null);
+      else if (p.type === 'drop') {
+        show(null);
+        const path = p.paths[0];
+        if (!path) {
+          this.notify('That drop carried no file — drag the file itself, or save it out first');
+          return;
+        }
+        const where = target(p.position);
+        void readPath(path)
+          .then((file) => (where === 'shape' ? this.shapes.ingest(file.name, file.bytes) : this.loadImage(file)))
+          .catch((err: Error) => this.notify(`Could not open ${path.split('/').pop()}: ${err.message ?? err}`));
+      }
     });
   }
 
@@ -1269,4 +1330,21 @@ function brandMark(): HTMLElement {
   const el = h('span', { class: 'brand-mark', 'aria-hidden': 'true' });
   el.innerHTML = markSvg;
   return el;
+}
+
+/**
+ * What a browser drop holds, as a file: the file itself, or the picture a link
+ * points at — dragged from another tab, or out of a web page as an `<img>`.
+ */
+async function droppedFile(dt: DataTransfer): Promise<PickedFile | null> {
+  const file = dt.files[0] ?? [...dt.items].find((i) => i.kind === 'file')?.getAsFile();
+  if (file) return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+  const html = dt.getData('text/html');
+  const src = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('img')?.src : undefined;
+  const url = src || dt.getData('text/uri-list').split(/\r?\n/).find((l) => l && !l.startsWith('#'));
+  if (!url || !/^(https?|data|blob):/i.test(url)) return null;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} fetching the picture`);
+  const name = decodeURIComponent(new URL(url).pathname.split('/').pop() || 'dropped image');
+  return { name, bytes: new Uint8Array(await res.arrayBuffer()) };
 }

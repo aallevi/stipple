@@ -37,7 +37,7 @@ const LAYER_OWN: Partial<Record<keyof Layer, true | string[]>> = {
   color: true,
   groupId: true,
   prefilter: ['channel', 'ink', 'undercolor', 'nearestSet', 'nearestPaperColor', 'nearestPicked', 'nearestBand'],
-  distribution: ['angle', 'angleFrom', 'seed'],
+  distribution: ['angle', 'angleFrom', 'shift', 'seed'],
 };
 
 const FIELD_DIRTY: Record<keyof Layer, Dirty> = {
