@@ -354,5 +354,7 @@ describe('undercolour removal', () => {
     // with nothing but its colour noise to print.
     expect(riso).toEqual([0, 0, 0]);
     expect(cmyk).toEqual([1, 1, 1, 0]);
+    // …unless the glitch is what is wanted.
+    expect(buildSeparation(SEPARATIONS.rawRiso, canvas).map((l) => l.prefilter.undercolor)).toEqual([1, 1, 1]);
   });
 });

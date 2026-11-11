@@ -283,3 +283,36 @@ describe('Store history', () => {
     expect(store.get().shapes.some((x) => x.id === raster.id)).toBe(false);
   });
 });
+
+describe('several layers at once', () => {
+  const stack = (): Store => {
+    const p = defaultProject();
+    p.layers = ['a', 'b', 'c', 'd', 'e'].map((n) => ({ ...defaultLayer(n), id: n }));
+    return new Store(p);
+  };
+  const names = (s: Store): string => s.get().layers.map((l) => l.id + (l.groupId ? '*' : '')).join('');
+
+  it('groups scattered layers under the topmost one, in one undo step', () => {
+    const s = stack();
+    s.groupLayers(['a', 'c', 'e'], { id: 'g', name: 'G', collapsed: false });
+    expect(names(s)).toBe('bda*c*e*');
+    s.undo();
+    expect(names(s)).toBe('abcde');
+  });
+
+  it('closes up below the top when the top one sits lower', () => {
+    const s = stack();
+    s.groupLayers(['a', 'c'], { id: 'g', name: 'G', collapsed: false });
+    expect(names(s)).toBe('ba*c*de');
+  });
+
+  it('deletes several in one undo step, but never the last layer', () => {
+    const s = stack();
+    s.removeLayers(['b', 'd']);
+    expect(names(s)).toBe('ace');
+    s.removeLayers(['a', 'c', 'e']);
+    expect(names(s)).toBe('ace');
+    s.undo();
+    expect(names(s)).toBe('abcde');
+  });
+});

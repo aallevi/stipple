@@ -25,6 +25,14 @@ export class LayersPanel {
   selected: string | null = null;
   /** The selected group, when it is the folder rather than a layer that is selected. */
   selectedGroup: string | null = null;
+  /**
+   * Layers picked together with ⌘- or shift-click. Two or more of them act as
+   * one selection: the inspector shows `selected`, edits reach them all, and
+   * they can be grouped or deleted at once. Empty for a single selection.
+   */
+  private picked = new Set<string>();
+  /** Where a shift-click range starts. */
+  private anchor: string | null = null;
   /** Says, while a group is selected, that edits reach all of it. */
   private groupNote = h('p', { class: 'link-note', hidden: '' });
   constructor(
@@ -39,7 +47,8 @@ export class LayersPanel {
           button('↓', () => this.nudge(-1), 'icon', 'Move the selected layer or group down the stack (⌘[)'),
           button('+', () => this.add(), 'icon', 'Add a layer'),
           button('⧉', () => this.duplicate(), 'icon', 'Duplicate the selected layer or group'),
-          button('−', () => this.remove(), 'icon', 'Delete the selected layer or group'),
+          button('⊞', () => this.groupPicked(), 'icon', 'Group the selected layers (⌘G) — ⌘-click or shift-click to select several'),
+          button('−', () => this.remove(), 'icon', 'Delete the selected layers or group'),
         ),
       ),
       this.list,
@@ -102,6 +111,16 @@ export class LayersPanel {
 
   remove(): void {
     const layers = this.store.get().layers;
+    if (this.picked.size > 1) {
+      const ids = [...this.picked];
+      if (ids.length >= layers.length) return;
+      if (!confirm(`Delete these ${ids.length} layers?`)) return;
+      const idx = layers.findIndex((l) => l.id === this.selected);
+      this.store.removeLayers(ids);
+      const left = this.store.get().layers;
+      this.select(left[Math.min(Math.max(0, idx - ids.length + 1), left.length - 1)]?.id ?? null);
+      return;
+    }
     if (this.selectedGroup) {
       const g = this.store.group(this.selectedGroup);
       const n = groupMembers(this.store.get(), this.selectedGroup).length;
@@ -118,8 +137,74 @@ export class LayersPanel {
     this.select(next?.id ?? null);
   }
 
+  /** Put the picked layers into a new group, closing up any gaps between them. */
+  groupPicked(): void {
+    const ids = this.picked.size > 1 ? [...this.picked] : [];
+    if (!ids.length) return;
+    const group: LayerGroup = { id: uid('group'), name: `Group ${(this.store.get().groups?.length ?? 0) + 1}`, collapsed: false };
+    this.store.groupLayers(ids, group);
+    this.selectGroup(group.id);
+  }
+
+  /**
+   * A click on a layer row, read the way a file list reads it: plain picks
+   * one, ⌘ adds or removes one, shift takes the run from the last one picked.
+   */
+  private clickLayer(id: string, e: MouseEvent): void {
+    const meta = e.metaKey || e.ctrlKey;
+    if (!meta && !e.shiftKey) return this.select(id);
+    if (!this.picked.size) {
+      // Start from what is selected now: a layer, or every layer of a group.
+      if (this.selectedGroup) for (const l of groupMembers(this.store.get(), this.selectedGroup)) this.picked.add(l.id);
+      else if (this.selected) this.picked.add(this.selected);
+    }
+    if (e.shiftKey && this.anchor) {
+      const shown = [...this.list.querySelectorAll<HTMLElement>('.layer-row[data-id]')].map((r) => r.dataset.id!);
+      const a = shown.indexOf(this.anchor);
+      const b = shown.indexOf(id);
+      if (a >= 0 && b >= 0) for (const x of shown.slice(Math.min(a, b), Math.max(a, b) + 1)) this.picked.add(x);
+      else this.picked.add(id);
+    } else if (this.picked.has(id) && this.picked.size > 1) {
+      this.picked.delete(id);
+      if (this.selected === id) id = [...this.picked][this.picked.size - 1];
+    } else {
+      this.picked.add(id);
+      this.anchor = id;
+    }
+    if (this.picked.size < 2) return this.select([...this.picked][0] ?? id);
+    holdScroll(this.list, () => {
+      this.selectedGroup = null;
+      this.selected = id;
+      this.onSelect(id);
+      this.render();
+    });
+  }
+
+  /** ⌘-click on a folder row: add or remove all of its layers. */
+  private clickGroup(gid: string, e: MouseEvent): void {
+    if (!(e.metaKey || e.ctrlKey || e.shiftKey)) return this.selectGroup(gid);
+    const members = groupMembers(this.store.get(), gid);
+    if (!members.length) return;
+    if (!this.picked.size) {
+      if (this.selectedGroup) for (const l of groupMembers(this.store.get(), this.selectedGroup)) this.picked.add(l.id);
+      else if (this.selected) this.picked.add(this.selected);
+    }
+    const all = members.every((l) => this.picked.has(l.id));
+    for (const l of members) all ? this.picked.delete(l.id) : this.picked.add(l.id);
+    if (this.picked.size < 2) return this.select([...this.picked][0] ?? members[members.length - 1].id);
+    const keep = this.picked.has(this.selected ?? '') ? this.selected! : [...this.picked][this.picked.size - 1];
+    holdScroll(this.list, () => {
+      this.selectedGroup = null;
+      this.selected = keep;
+      this.onSelect(keep);
+      this.render();
+    });
+  }
+
   select(id: string | null): void {
     holdScroll(this.list, () => {
+      this.picked.clear();
+      this.anchor = id;
       this.selected = id;
       this.selectedGroup = null;
       this.store.scope = null;
@@ -136,6 +221,7 @@ export class LayersPanel {
     const members = groupMembers(this.store.get(), id);
     if (!members.length) return this.select(null);
     holdScroll(this.list, () => {
+      this.picked.clear();
       this.selectedGroup = id;
       this.selected = members[members.length - 1].id;
       this.store.scope = members.map((l) => l.id);
@@ -162,7 +248,9 @@ export class LayersPanel {
         this.onSelect(this.selected);
       }
     } else {
-      this.store.scope = null;
+      for (const id of [...this.picked]) if (!layers.some((l) => l.id === id)) this.picked.delete(id);
+      if (this.picked.size < 2) this.picked.clear();
+      this.store.scope = this.picked.size ? [...this.picked] : null;
     }
     if (this.selected && !layers.some((l) => l.id === this.selected)) {
       this.selected = layers[layers.length - 1]?.id ?? null;
@@ -170,9 +258,13 @@ export class LayersPanel {
     }
 
     const g = this.selectedGroup ? this.store.group(this.selectedGroup) : undefined;
-    this.groupNote.hidden = !g;
-    this.groupNote.parentElement?.toggleAttribute('hidden', !g);
-    if (g) {
+    const many = this.picked.size;
+    this.groupNote.hidden = !g && !many;
+    this.groupNote.parentElement?.toggleAttribute('hidden', !g && !many);
+    if (many) {
+      this.groupNote.textContent = `${many} layers selected — edits reach all of them, each keeping its own `
+        + 'colour, screen angle and seed. ⌘G groups them; − deletes them.';
+    } else if (g) {
       const n = groupMembers(project, g.id).length;
       this.groupNote.textContent = `Editing all ${n} layers of “${g.name}” together — each keeps its own `
         + 'colour, screen angle and seed. Select one layer to change it alone.';
@@ -242,7 +334,7 @@ export class LayersPanel {
       name,
       h('span', { class: 'layer-meta' }, `${members.length} layers`, ungroup),
     );
-    row.addEventListener('click', () => this.selectGroup(group.id));
+    row.addEventListener('click', (e) => this.clickGroup(group.id, e));
     row.addEventListener('pointerdown', (e) => this.beginDrag(e, row, { group: group.id }));
     return row;
   }
@@ -262,17 +354,18 @@ export class LayersPanel {
     const name = h('input', { class: 'layer-name' }) as HTMLInputElement;
     name.value = layer.name;
     name.addEventListener('change', () => this.store.updateLayer(layer.id, { name: name.value }));
-    this.selectThenRename(name, () => layer.id === this.selected && !this.selectedGroup, () => this.select(layer.id));
+    this.selectThenRename(name, () => layer.id === this.selected && !this.selectedGroup && !this.picked.size, () => this.select(layer.id));
 
     // A colour layer shows its colour, so a group of them reads as a palette.
     const chip = layer.color.mode === 'solid'
       ? h('span', { class: 'layer-chip', style: `background: ${css(layer.color.color)}` })
       : null;
 
-    const selected = layer.id === this.selected && !this.selectedGroup;
+    const selected = this.picked.size ? this.picked.has(layer.id) : layer.id === this.selected && !this.selectedGroup;
     const row = h('div', {
       class: `layer-row${inGroup ? ' in-group' : ''}${selected ? ' selected' : ''}`,
       'data-top': String(index), 'data-bottom': String(index), 'data-group-of': layer.groupId ?? '',
+      'data-id': layer.id,
     },
       h('span', { class: 'layer-grip', title: 'Drag to reorder' }, '⠿'),
       visible,
@@ -280,7 +373,7 @@ export class LayersPanel {
       h('span', { class: 'layer-meta' }, ...(chip ? [chip] : []),
         `${algoLabel(layer.distribution.algo)}${layer.input === 'below' ? ' · below' : ''}`),
     );
-    row.addEventListener('click', () => this.select(layer.id));
+    row.addEventListener('click', (e) => this.clickLayer(layer.id, e));
     row.addEventListener('pointerdown', (e) => this.beginDrag(e, row, { layer: layer.id }));
     return row;
   }
@@ -293,12 +386,17 @@ export class LayersPanel {
   private selectThenRename(name: HTMLInputElement, isSelected: () => boolean, select: () => void): void {
     name.readOnly = !isSelected();
     name.addEventListener('pointerdown', (e) => {
+      // With a modifier the row's own click decides (add to the selection).
+      if (e.metaKey || e.ctrlKey || e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
       if (isSelected()) return;
       e.preventDefault();
       select();
     });
     name.addEventListener('click', (e) => {
-      if (isSelected()) e.stopPropagation();
+      if (isSelected() && !(e.metaKey || e.ctrlKey || e.shiftKey)) e.stopPropagation();
     });
   }
 

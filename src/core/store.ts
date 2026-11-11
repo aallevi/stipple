@@ -285,6 +285,46 @@ export class Store {
     this.schedule();
   }
 
+  /**
+   * Gather any layers into a new group, as one undo step.
+   *
+   * They need not be next to each other: the others close up under the
+   * topmost one picked, keeping their order, so the group lands where the
+   * highest of them was.
+   */
+  groupLayers(ids: string[], group: LayerGroup): void {
+    const layers = this.project.layers;
+    const chosen = layers.filter((l) => ids.includes(l.id));
+    if (!chosen.length) return;
+    this.commit(`group:${group.id}`);
+    const top = Math.max(...chosen.map((l) => layers.indexOf(l)));
+    const rest = layers.filter((l) => !ids.includes(l.id));
+    const at = layers.slice(0, top).filter((l) => !ids.includes(l.id)).length;
+    for (const l of chosen) l.groupId = group.id;
+    rest.splice(at, 0, ...chosen);
+    this.project.layers = rest;
+    this.project.groups = [...(this.project.groups ?? []), group];
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    for (const l of this.project.layers) {
+      if (l.input === 'below') this.markLayer(l.id, Dirty.Density);
+    }
+    this.schedule();
+  }
+
+  /** Delete several layers in one undo step. The last layer of a document stays. */
+  removeLayers(ids: string[]): void {
+    const remaining = this.project.layers.filter((l) => !ids.includes(l.id));
+    if (!remaining.length || remaining.length === this.project.layers.length) return;
+    this.commit(`remove:${ids.join(',')}`);
+    for (const id of ids) releaseFollowers(this.project.layers, id);
+    this.project.layers = this.project.layers.filter((l) => !ids.includes(l.id));
+    tidyGroups(this.project);
+    this.pending.structural = true;
+    this.pending.global = worst(this.pending.global, Dirty.All);
+    this.schedule();
+  }
+
   /** Insert a new group's layers at an index of the stack, as one undo step. */
   insertGroup(layers: Layer[], group: LayerGroup, at: number): void {
     this.commit(`insert-group:${group.id}`);

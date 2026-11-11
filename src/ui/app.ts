@@ -777,6 +777,9 @@ export class App {
         // the one way to reorder the stack that needs neither aim nor a pointer.
         e.preventDefault();
         this.layers.nudge(e.key === ']' ? 1 : -1);
+      } else if (meta && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        this.layers.groupPicked();
       } else if (e.key === '0') {
         this.fitToWindow();
       } else if (e.key === 'Escape' && this.picking) {

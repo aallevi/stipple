@@ -32,6 +32,12 @@ export type SeparationKind = {
   /** Shown in the menu. */
   label: string;
   inks: Ink[];
+  /**
+   * Take the greys out of every plate even with no black to print them. A
+   * grey picture then keeps only its colour cast, and its compression blocks
+   * with it: flat, blotchy, posterised colour — a glitch, on purpose.
+   */
+  dropGreys?: boolean;
 };
 
 /**
@@ -80,6 +86,15 @@ export const SEPARATIONS: Record<string, SeparationKind> = {
       { name: 'Blue', color: [0.0, 0.47, 0.84, 1] },
       { name: 'Yellow', color: [1.0, 0.9, 0.0, 1] },
     ],
+  },
+  rawRiso: {
+    label: 'Risograph glitch · pink, blue, yellow, greys dropped',
+    inks: [
+      { name: 'Fluoro pink', color: [1.0, 0.28, 0.56, 1] },
+      { name: 'Blue', color: [0.0, 0.47, 0.84, 1] },
+      { name: 'Yellow', color: [1.0, 0.9, 0.0, 1] },
+    ],
+    dropGreys: true,
   },
   earth: {
     label: 'Earth · brown, tan, ochre (3 plates)',
@@ -154,7 +169,7 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
       ...layer.prefilter,
       channel: 'ink',
       ink: ink.color,
-      undercolor: isKey ? 0 : undercolorFor(ink.color, kind.inks.map((k) => k.color)),
+      undercolor: isKey ? 0 : kind.dropGreys ? 1 : undercolorFor(ink.color, kind.inks.map((k) => k.color)),
     };
     layer.color = { ...layer.color, mode: 'solid', color: ink.color };
     layer.distribution = {
