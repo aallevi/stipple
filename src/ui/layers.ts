@@ -119,11 +119,13 @@ export class LayersPanel {
   }
 
   select(id: string | null): void {
-    this.selected = id;
-    this.selectedGroup = null;
-    this.store.scope = null;
-    if (id) this.onSelect(id);
-    this.render();
+    holdScroll(this.list, () => {
+      this.selected = id;
+      this.selectedGroup = null;
+      this.store.scope = null;
+      if (id) this.onSelect(id);
+      this.render();
+    });
   }
 
   /**
@@ -133,14 +135,20 @@ export class LayersPanel {
   selectGroup(id: string): void {
     const members = groupMembers(this.store.get(), id);
     if (!members.length) return this.select(null);
-    this.selectedGroup = id;
-    this.selected = members[members.length - 1].id;
-    this.store.scope = members.map((l) => l.id);
-    this.onSelect(this.selected);
-    this.render();
+    holdScroll(this.list, () => {
+      this.selectedGroup = id;
+      this.selected = members[members.length - 1].id;
+      this.store.scope = members.map((l) => l.id);
+      this.onSelect(this.selected);
+      this.render();
+    });
   }
 
   render(): void {
+    holdScroll(this.list, () => this.build());
+  }
+
+  private build(): void {
     const project = this.store.get();
     const layers = project.layers;
 
@@ -306,6 +314,10 @@ export class LayersPanel {
     // The name field has to keep its own click-to-edit and drag-to-select.
     if ((e.target as HTMLElement).closest('input, button')) return;
     if (e.button !== 0) return;
+    // Claim the press. Left to the browser it starts a text selection, which
+    // then follows the pointer across every label in the sidebar and drags
+    // the sidebar's scroll along with it.
+    e.preventDefault();
 
     const startY = e.clientY;
     let dragging = false;
@@ -319,6 +331,8 @@ export class LayersPanel {
         dragging = true;
         row.setPointerCapture(ev.pointerId);
         row.classList.add('dragging');
+        document.documentElement.classList.add('reordering');
+        getSelection()?.removeAllRanges();
       }
       slot = this.slotAt(ev.clientY);
       this.showMarker(slot);
@@ -328,6 +342,7 @@ export class LayersPanel {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
+      document.documentElement.classList.remove('reordering');
       if (!dragging) return;
       row.releasePointerCapture?.(ev.pointerId);
       row.classList.remove('dragging');
@@ -407,4 +422,19 @@ function css(c: [number, number, number, number]): string {
 
 function algoLabel(algo: string): string {
   return algo === 'jittered' ? 'Stochastic' : algo === 'voronoi' ? 'Voronoi' : 'Halftone';
+}
+
+/**
+ * Run `fn` without moving the sidebar.
+ *
+ * Selecting a layer rebuilds the list and the inspector under it; while the
+ * new nodes go in, the sidebar's content is momentarily a different height and
+ * the browser clamps its scroll position to fit. Put back afterwards, the
+ * panel stays where it was being read.
+ */
+export function holdScroll(inside: HTMLElement, fn: () => void): void {
+  const scroller = inside.closest<HTMLElement>('.sidebar');
+  const top = scroller?.scrollTop ?? 0;
+  fn();
+  if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;
 }

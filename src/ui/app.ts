@@ -17,7 +17,7 @@ import { InksPanel } from './inks';
 import { Inspector } from './inspector';
 import { extractPalette } from '../core/color';
 import type { PreviewInks } from '../gl/composite';
-import { LayersPanel } from './layers';
+import { holdScroll, LayersPanel } from './layers';
 import { ShapesPanel } from './shapes';
 import { PRESETS } from './presets';
 import markSvg from '../../assets/brand/mark.svg?raw';
@@ -146,11 +146,13 @@ export class App {
 
     this.store.subscribe((project, change) => {
       this.engine.sync(project, change);
-      if (change.structural) this.layers.render();
-      if (change.shapes) this.shapes.render(this.selectedShapeId());
-      else this.shapes.setSelected(this.selectedShapeId());
-      this.inspector.update(this.layers.selected);
-      this.inks.update();
+      holdScroll(this.inspector.el, () => {
+        if (change.structural) this.layers.render();
+        if (change.shapes) this.shapes.render(this.selectedShapeId());
+        else this.shapes.setSelected(this.selectedShapeId());
+        this.inspector.update(this.layers.selected);
+        this.inks.update();
+      });
       this.syncPreviewInks();
       // Undo, a preset and a freshly opened image all rewrite the canvas
       // settings without going through those controls, so push the values back.
