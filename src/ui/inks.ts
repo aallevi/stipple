@@ -9,7 +9,7 @@ import {
   button, group, h, hint, paletteControl, raw, readout, section, select, slider, toggle,
   type Control, type Interaction,
 } from './controls';
-import { ANGLES, buildColourLayers, buildSeparation, INK_SETS, isNeutral, SEPARATIONS } from './separations';
+import { ANGLES, buildColourLayers, buildSeparation, INK_SETS, isNeutral, SEPARATIONS, undercolorFor } from './separations';
 
 /** How a print group's layers share the picture. */
 export type PrintKind = 'spot' | 'plates';
@@ -222,6 +222,10 @@ export class InksPanel {
         }
         list.forEach((l, i) => recolour(l, colours[i]));
         for (let i = list.length; i < colours.length; i++) this.addInk(gid, colours[i], false);
+        // New inks, new answer to who carries the greys (see `undercolorFor`).
+        if (first()?.prefilter.channel === 'ink') {
+          for (const l of inks()) s.updateLayerField(l.id, 'prefilter', { undercolor: undercolorFor(inkOf(l), colours) });
+        }
         if (Object.keys(extra).length) for (const l of inks()) s.updateLayerField(l.id, 'prefilter', extra);
         if (first()?.prefilter.nearestRanges) this.resetBands(gid);
       });
@@ -432,7 +436,7 @@ export class InksPanel {
       channel: plates ? 'ink' : 'nearest',
       ink: c,
       nearestPicked: picked,
-      undercolor: plates ? (isNeutral(c) ? 0 : 1) : copy.prefilter.undercolor,
+      undercolor: plates ? undercolorFor(c, [...list.map(inkOf), c]) : copy.prefilter.undercolor,
     };
     copy.color = { ...copy.color, mode: 'solid', color: c };
     const d = copy.distribution as Layer['distribution'] & { angle?: number; seed?: number };
@@ -445,6 +449,10 @@ export class InksPanel {
     const span = groupSpan(project, gid);
     s.batch(`add-ink:${copy.id}`, () => {
       s.addLayer(copy, span ? span[1] + 1 : project.layers.length);
+      // The first key plate in a set: now the colour plates can hand it the greys.
+      if (plates && isNeutral(c) && !list.some((l) => isNeutral(inkOf(l)))) {
+        for (const l of list) s.updateLayerField(l.id, 'prefilter', { undercolor: undercolorFor(inkOf(l), [c]) });
+      }
       if (copy.prefilter.nearestRanges) this.resetBands(gid);
     });
   }
@@ -576,11 +584,11 @@ export class InksPanel {
     const s = this.store;
     const list = this.inks(gid);
     s.batch(`convert:${gid}`, () => {
-      list.forEach((l, i) => {
+      list.forEach((l) => {
         const ink = l.prefilter.ink ?? l.color.color;
         s.updateLayerField(l.id, 'prefilter', to === 'spot'
           ? { channel: 'nearest', nearestPaper: l.prefilter.nearestPaper ?? true, nearestMix: l.prefilter.nearestMix ?? 0.15 }
-          : { channel: 'ink', undercolor: i === 0 && isNeutral(ink) ? 0 : 1 });
+          : { channel: 'ink', undercolor: undercolorFor(ink, list.map(inkOf)) });
         s.updateLayer(l.id, { blend: 'multiply' });
       });
     });
@@ -617,4 +625,9 @@ function lightnessHistogram(pic: ImageSource): number[] {
   }
   histograms.set(pic.rgba, bins);
   return bins;
+}
+
+/** The ink a layer prints with. */
+function inkOf(l: Layer): RGBA {
+  return l.prefilter.ink ?? l.color.color;
 }

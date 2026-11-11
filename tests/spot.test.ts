@@ -343,3 +343,16 @@ describe('ink shares', () => {
     expect(shares.every((v) => v >= 0 && v <= 1)).toBe(true);
   });
 });
+
+describe('undercolour removal', () => {
+  it('hands the greys to a key plate only when there is one', async () => {
+    const { SEPARATIONS, buildSeparation } = await import('../src/ui/separations');
+    const canvas = defaultProject().canvas;
+    const riso = buildSeparation(SEPARATIONS.riso, canvas).map((l) => l.prefilter.undercolor);
+    const cmyk = buildSeparation(SEPARATIONS.cmyk, canvas).map((l) => l.prefilter.undercolor);
+    // No black in a riso set: removing the grey would leave a grey photo
+    // with nothing but its colour noise to print.
+    expect(riso).toEqual([0, 0, 0]);
+    expect(cmyk).toEqual([1, 1, 1, 0]);
+  });
+});

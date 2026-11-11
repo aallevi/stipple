@@ -154,8 +154,7 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
       ...layer.prefilter,
       channel: 'ink',
       ink: ink.color,
-      // The key plate is the one that *should* carry the greys.
-      undercolor: isKey ? 0 : 1,
+      undercolor: isKey ? 0 : undercolorFor(ink.color, kind.inks.map((k) => k.color)),
     };
     layer.color = { ...layer.color, mode: 'solid', color: ink.color };
     layer.distribution = {
@@ -170,6 +169,22 @@ export function buildSeparation(kind: SeparationKind, canvas: Project['canvas'])
     layer.size = { ...layer.size, min: 0, max: Math.SQRT2 / cells, fromTone: 1, gamma: 0.5, jitter: 0 };
     return layer;
   });
+}
+
+/**
+ * How much grey a plate should hand over to the others.
+ *
+ * Undercolour removal takes the neutral part out of a colour plate because a
+ * black plate prints it better. With no near-black ink in the set — a riso
+ * pink, blue and yellow — nothing would print it at all: a grey photograph
+ * loses its whole tone, and what is left for the plates to measure is the faint
+ * colour cast left in it, JPEG's 8- and 16-pixel colour blocks above all, which
+ * then print as a patchwork of rectangles. So the greys stay with the colour
+ * plates unless there is a key plate to take them.
+ */
+export function undercolorFor(ink: RGBA, inks: RGBA[]): number {
+  if (isNeutral(ink)) return 0;
+  return inks.some(isNeutral) ? 1 : 0;
 }
 
 /** A plate whose ink is close enough to neutral to carry the greys. */
