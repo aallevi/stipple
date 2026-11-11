@@ -1,5 +1,6 @@
 import type { ShapeDef } from '../core/types';
 import { uid } from '../core/defaults';
+import { decodeBitmap } from '../image/loader';
 
 /**
  * Turning a user's file into a stamp.
@@ -117,7 +118,7 @@ export function importSVG(name: string, text: string): ShapeDef {
 
 async function importRaster(name: string, bytes: Uint8Array): Promise<{ def: ShapeDef; bitmap: ImageBitmap }> {
   const blob = new Blob([bytes.slice().buffer as ArrayBuffer]);
-  const bitmap = await createImageBitmap(blob);
+  const bitmap = await decodeBitmap(bytes);
   const data = await blobToDataURL(blob);
   const def: ShapeDef = {
     kind: 'raster',
@@ -133,7 +134,7 @@ async function importRaster(name: string, bytes: Uint8Array): Promise<{ def: Sha
 /** Rebuild the bitmap for a raster shape loaded from a saved project. */
 export async function rasterBitmap(def: Extract<ShapeDef, { kind: 'raster' }>): Promise<ImageBitmap> {
   const res = await fetch(def.data);
-  return createImageBitmap(await res.blob());
+  return decodeBitmap(new Uint8Array(await res.arrayBuffer()));
 }
 
 function blobToDataURL(blob: Blob): Promise<string> {

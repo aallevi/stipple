@@ -32,7 +32,7 @@ fn decode_image(path: String) -> Result<DecodedImage, String> {
 /// only when it is actually running inside the desktop shell.
 #[tauri::command]
 fn native_image_formats() -> Vec<String> {
-    ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"]
+    ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "jxl"]
         .iter()
         .map(|s| s.to_string())
         .collect()

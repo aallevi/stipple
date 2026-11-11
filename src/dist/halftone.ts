@@ -74,6 +74,9 @@ export function generateHalftone(p: HalftoneParams, ctx: GenContext): PointBuffe
       const tone = density.sampleArea(x * sx, y * sy, areaRadius * Math.max(sx, sy));
       const ink = inkAt(tone, p.invertDensity, p.toneRange, mask);
       if (ink <= 0) continue;
+      // A cell's dot is sized by tone, not by ink, so coverage cannot shrink it;
+      // a cell is either on the picture or off it.
+      if (density.coverAt(x * sx, y * sy) < 0.5) continue;
 
       const grad = density.gradientAt(x * sx, y * sy);
       const rand = hash2(Math.round(i * 4), j, 17);

@@ -17,5 +17,8 @@ export default defineConfig({
     sourcemap: true,
   },
   preview: { port: 4173 },
+  // The JPEG XL codec finds its .wasm beside itself through import.meta.url;
+  // pre-bundling would move the script away from it.
+  optimizeDeps: { exclude: ['@jsquash/jxl'] },
   worker: { format: 'es' },
 });

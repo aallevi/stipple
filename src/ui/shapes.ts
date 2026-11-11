@@ -58,7 +58,7 @@ export class ShapesPanel {
 
   private async importShape(): Promise<void> {
     const picked = await openFile([
-      { name: 'Shape', extensions: ['svg', 'png', 'webp', 'gif'] },
+      { name: 'Shape', extensions: ['svg', 'png', 'webp', 'gif', 'jxl'] },
     ]);
     if (picked) await this.ingest(picked.name, picked.bytes);
   }

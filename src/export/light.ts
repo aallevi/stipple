@@ -1,5 +1,6 @@
 import type { Project } from '../core/types';
 import type { Engine } from '../pipeline/engine';
+import { encodeJXL } from '../image/jxl';
 import { isTauri } from '../platform';
 import { encodeCanvas, renderCanvas, type ExportProgress } from './png';
 import { exportSVG } from './svg';
@@ -95,4 +96,17 @@ export async function exportWebP(engine: Engine, project: Project, onProgress?: 
     return new Uint8Array(out);
   }
   throw new Error('this browser cannot write WebP — try Chrome, Firefox or the desktop app');
+}
+
+/**
+ * Lossless JPEG XL at the document's pixel size.
+ *
+ * No browser canvas encodes JXL, so libjxl does it, in wasm, everywhere. The
+ * pixels are read back unpremultiplied, so a transparent sheet's soft edges
+ * survive the trip rather than darkening.
+ */
+export async function exportJXL(engine: Engine, project: Project, onProgress?: ExportProgress): Promise<Uint8Array> {
+  const canvas = await renderCanvas(engine, project, 1, onProgress);
+  const g = canvas.getContext('2d') as OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+  return encodeJXL(g.getImageData(0, 0, canvas.width, canvas.height));
 }

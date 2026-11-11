@@ -1,4 +1,5 @@
 import type { ImageSource } from './density';
+import { decodeJXL, isJXL } from './jxl';
 
 /** Longest edge kept for the density map. Beyond this the extra detail does not
  *  survive stippling, and the memory and CPU cost of the prefilter chain does. */
@@ -11,12 +12,31 @@ export const MAX_SOURCE_EDGE = 4096;
  * knows about blobs, bitmaps or canvases.
  */
 export async function decodeImage(bytes: Uint8Array, mime?: string): Promise<ImageSource> {
-  const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: mime ?? sniffMime(bytes) });
-  const bitmap = await createImageBitmap(blob);
+  const bitmap = await decodeBitmap(bytes, mime);
   try {
     return bitmapToSource(bitmap);
   } finally {
     bitmap.close();
+  }
+}
+
+/**
+ * Bytes to a bitmap, by content rather than by name.
+ *
+ * The web view decodes what it can — WebKit on macOS 14 and later includes
+ * JPEG XL, alpha and all. A JXL it turns down (Chrome, Firefox, an older Mac)
+ * goes to libjxl in wasm, which hands back straight RGBA just as a PNG would.
+ */
+export async function decodeBitmap(bytes: Uint8Array, mime?: string): Promise<ImageBitmap> {
+  const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: mime ?? sniffMime(bytes) });
+  try {
+    return await createImageBitmap(blob);
+  } catch (err) {
+    if (!isJXL(bytes)) throw err;
+    // Premultiplied, said outright: the bitmap is scaled on its way to the
+    // density map, and filtering straight alpha drags the colour of invisible
+    // pixels into a cut-out's soft edge.
+    return createImageBitmap(await decodeJXL(bytes), { premultiplyAlpha: 'premultiply' });
   }
 }
 
@@ -41,6 +61,7 @@ function sniffMime(b: Uint8Array): string {
   if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg';
   if (b[0] === 0x47 && b[1] === 0x49) return 'image/gif';
   if (b[8] === 0x57 && b[9] === 0x45) return 'image/webp';
+  if (isJXL(b)) return 'image/jxl';
   if (b[0] === 0x3c || (b[0] === 0xef && b[3] === 0x3c)) return 'image/svg+xml';
   return 'application/octet-stream';
 }

@@ -66,7 +66,8 @@ export function generateJittered(p: JitteredParams, ctx: GenContext): PointBuffe
         if (x < 0 || x >= width || y < 0 || y >= height) continue;
 
         const tone = map.sample(x * sx, y * sy);
-        const ink = quantise(inkAt(tone, p.invertDensity, p.toneRange, mask), p.phases);
+        // Coverage scales the odds, so a soft cut-out edge thins out gradually.
+        const ink = quantise(inkAt(tone, p.invertDensity, p.toneRange, mask) * map.coverAt(x * sx, y * sy), p.phases);
         if (ink <= 0) continue;
 
         // Threshold against an independent hash: expected density matches ink

@@ -21,6 +21,14 @@ export class DensityMap {
   readonly lum: Float32Array;
   /** Original colours, for the `image` colour mode. */
   readonly rgba: Uint8ClampedArray;
+  /**
+   * How much picture there is at each pixel, 0..1 — the source's alpha. Null
+   * when the source is opaque, which is every photograph and every readback, so
+   * they pay nothing for it. Ink is multiplied by this everywhere a point is
+   * placed: a cut-out's background holds no picture and takes no dots, whatever
+   * colour happens to be stored under it and whichever way the layer reads tone.
+   */
+  readonly cover: Float32Array | null;
   /** Box-filtered mip chain for cheap area averages (halftone cells). */
   private mips: { data: Float32Array; w: number; h: number }[] = [];
   private gradient: Float32Array | null = null;
@@ -37,9 +45,11 @@ export class DensityMap {
     readonly height: number,
     lum: Float32Array,
     rgba: Uint8ClampedArray,
+    cover: Float32Array | null = null,
   ) {
     this.lum = lum;
     this.rgba = rgba;
+    this.cover = cover;
   }
 
   /**
@@ -63,6 +73,7 @@ export class DensityMap {
     // takes. Grades still apply on top, so the layer stays adjustable.
 
     const rgbLut = channelLUTs(f.curves);
+    const cover = coverage(rgba);
 
     for (let i = 0; i < n; i++) {
       let r = rgba[i * 4] / 255;
@@ -72,6 +83,16 @@ export class DensityMap {
         r = rgbLut[0][rgba[i * 4]];
         g = rgbLut[1][rgba[i * 4 + 1]];
         b = rgbLut[2][rgba[i * 4 + 2]];
+      }
+      if (cover && cover[i] < 1) {
+        // Over white, before any filter: what sits under a transparent pixel is
+        // whatever the encoder left there — black from a canvas, blocks of stale
+        // colour from a lossy alpha channel — and a blur would drag it into the
+        // edge of the subject. `cover` then keeps dots out of it altogether.
+        const a = cover[i];
+        r = r * a + (1 - a);
+        g = g * a + (1 - a);
+        b = b * a + (1 - a);
       }
       // `lum` is tone, where 0 is dark and gets the most ink. A separation
       // measures coverage, which runs the other way, so it is inverted here and
@@ -106,16 +127,16 @@ export class DensityMap {
     // curve editor draws is the one these tones actually have — blurred,
     // brightened and contrasted already — and a handle placed on a peak lands
     // on the tones in that peak.
-    const toneIn = toneHistogram(lum);
+    const toneIn = toneHistogram(lum, 256, cover);
     const map = toneMapper(f);
     if (map) for (let i = 0; i < n; i++) lum[i] = map(lum[i]);
 
     if (f.sharpen > 0) lum = unsharp(lum, width, height, f.sharpen, pixelScale);
     if (f.invert) for (let i = 0; i < n; i++) lum[i] = 1 - lum[i];
 
-    const out = new DensityMap(width, height, lum, rgba);
+    const out = new DensityMap(width, height, lum, rgba, cover);
     out.toneIn = toneIn;
-    out.toneOut = toneHistogram(lum);
+    out.toneOut = toneHistogram(lum, 256, cover);
     return out;
   }
 
@@ -135,6 +156,12 @@ export class DensityMap {
     const c = lum[y1 * w + x0];
     const d = lum[y1 * w + x1];
     return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+  }
+
+  /** Bilinear coverage lookup in pixel coordinates; 1 for an opaque source. */
+  coverAt(x: number, y: number): number {
+    const c = this.cover;
+    return c ? bilinear(c, this.width, this.height, x, y) : 1;
   }
 
   /** Nearest-neighbour colour lookup, as 0..1 RGB. */
@@ -234,7 +261,8 @@ export class DensityMap {
     for (let y = 0; y < h; y++) {
       let rowSum = 0;
       for (let x = 0; x < w; x++) {
-        rowSum += weight(lum[y * w + x]);
+        const i = y * w + x;
+        rowSum += this.cover ? weight(lum[i]) * this.cover[i] : weight(lum[i]);
         rows[y * w + x] = rowSum;
       }
       running += rowSum;
@@ -287,6 +315,18 @@ function inkProjector(f: Prefilter): (r: number, g: number, b: number) => number
     const v = t - gcr * grey;
     return v < 0 ? 0 : v > 1 ? 1 : v;
   };
+}
+
+/** The source's alpha as 0..1, or null when there is none worth carrying. */
+function coverage(rgba: Uint8ClampedArray): Float32Array | null {
+  const n = rgba.length >> 2;
+  let i = 0;
+  while (i < n && rgba[i * 4 + 3] === 255) i++;
+  if (i === n) return null;
+  const out = new Float32Array(n);
+  out.fill(1, 0, i);
+  for (; i < n; i++) out[i] = rgba[i * 4 + 3] / 255;
+  return out;
 }
 
 function bilinear(data: Float32Array, w: number, h: number, x: number, y: number): number {

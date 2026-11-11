@@ -4,7 +4,7 @@ import type { Project } from '../core/types';
 import { exportPDF } from '../export/pdf';
 import { exportPlates, planPlates } from '../export/plates';
 import { exportPNG } from '../export/png';
-import { exportCompactSVG, exportSVGZ, exportWebP } from '../export/light';
+import { exportCompactSVG, exportJXL, exportSVGZ, exportWebP } from '../export/light';
 import { estimatePoints, exportSVG, WARN_POINTS } from '../export/svg';
 import { decodeImage } from '../image/loader';
 import type { ImageSource } from '../image/density';
@@ -23,13 +23,14 @@ import { PRESETS } from './presets';
 import markSvg from '../../assets/brand/mark.svg?raw';
 import { formatLength } from './units';
 
-type LightKind = 'compact' | 'svgz' | 'webp';
+type LightKind = 'compact' | 'svgz' | 'webp' | 'jxl';
 
 /** The light formats, as the More\u2026 menu and the phone's export menu list them. */
 const LIGHT: [LightKind, string][] = [
   ['compact', 'Compact SVG \u2014 the same vector, rounded and tightened'],
   ['svgz', 'SVGZ \u2014 compact SVG, gzipped: the lightest vector'],
   ['webp', 'WebP \u2014 lossless pixels, far lighter than PNG'],
+  ['jxl', 'JPEG XL \u2014 lossless pixels, lighter still, keeps transparency'],
 ];
 
 /**
@@ -65,7 +66,7 @@ export class App {
     h('div', { class: 'drop-zone-inner' },
       h('p', { class: 'drop-zone-title' }, 'Drop an image here'),
       button('Open image\u2026', () => void this.openImage()),
-      h('p', { class: 'drop-zone-hint' }, 'PNG, JPEG, WebP or GIF. It stays on your device.'),
+      h('p', { class: 'drop-zone-hint' }, 'PNG, JPEG, WebP, JPEG XL or GIF. It stays on your device.'),
     ),
   );
   private interaction: Interaction;
@@ -352,7 +353,7 @@ export class App {
   private lightMenu(): HTMLElement {
     const sel = h('select', {
       class: 'light-select', 'aria-label': 'More export formats',
-      title: 'Lighter files: compact SVG, SVGZ, lossless WebP',
+      title: 'Lighter files: compact SVG, SVGZ, lossless WebP and JPEG XL',
     }) as HTMLSelectElement;
     sel.append(h('option', { value: '' }, 'More\u2026'));
     for (const [value, label] of LIGHT) sel.append(h('option', { value }, label));
@@ -1093,6 +1094,16 @@ export class App {
         if (await saveFile(bytes, 'stipple.webp', [{ name: 'WebP', extensions: ['webp'] }])) {
           const { width: pw, height: ph } = project.canvas;
           this.notify(`Exported WebP at ${pw}\u00d7${ph}, lossless \u2014 ${kb(bytes.length)}`);
+        }
+        return;
+      }
+      if (kind === 'jxl') {
+        this.notify('Rendering JPEG XL\u2026');
+        const bytes = await exportJXL(this.engine, project, (done, total) =>
+          this.notify(`Rendering JPEG XL\u2026 tile ${done}/${total}`));
+        if (await saveFile(bytes, 'stipple.jxl', [{ name: 'JPEG XL', extensions: ['jxl'] }])) {
+          const { width: pw, height: ph } = project.canvas;
+          this.notify(`Exported JPEG XL at ${pw}\u00d7${ph}, lossless \u2014 ${kb(bytes.length)}`);
         }
         return;
       }

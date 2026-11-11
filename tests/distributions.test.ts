@@ -195,3 +195,51 @@ describe('Writer.finish', () => {
     expect(buf.data[POINT_STRIDE]).toBe(3);
   });
 });
+
+/**
+ * A cut-out: the left half is picture (mid grey), the right half transparent
+ * with a patchwork of stale colour stored under it — black and white squares,
+ * the way a lossy alpha channel or a straight-alpha decoder can leave it.
+ */
+function cutout(w = 128, h = 128): DensityMap {
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const inside = x < w / 2;
+      const v = inside ? 128 : ((x >> 3) + (y >> 3)) & 1 ? 0 : 255;
+      rgba[i] = rgba[i + 1] = rgba[i + 2] = v;
+      rgba[i + 3] = inside ? 255 : 0;
+    }
+  }
+  return DensityMap.fromSource({ width: w, height: h, rgba }, {
+    brightness: 0, contrast: 0, gamma: 1, blur: 2, sharpen: 0, invert: false,
+  });
+}
+
+describe('transparent sources', () => {
+  const xs = (pts: ReturnType<typeof generateJittered>): number[] =>
+    Array.from({ length: pts.count }, (_, i) => pts.data[i * POINT_STRIDE]);
+
+  for (const invertDensity of [false, true]) {
+    it(`puts no points where there is no picture${invertDensity ? ', stippling the lights' : ''}`, () => {
+      const map = cutout();
+      const j = generateJittered({ ...(defaultDistribution('jittered') as JitteredParams), invertDensity }, ctx(map));
+      const h = generateHalftone({ ...(defaultDistribution('halftone') as HalftoneParams), invertDensity }, ctx(map));
+      for (const pts of [j, h]) {
+        expect(pts.count).toBeGreaterThan(0);
+        expect(xs(pts).filter((x) => x > 64 + 2).length).toBe(0);
+      }
+    });
+  }
+
+  it('keeps the background out of the tone histogram', () => {
+    const map = cutout();
+    const total = map.toneOut.reduce((a, b) => a + b, 0);
+    expect(total).toBe(128 * 64);
+  });
+
+  it('carries no coverage for an opaque source', () => {
+    expect(ramp().cover).toBeNull();
+  });
+});

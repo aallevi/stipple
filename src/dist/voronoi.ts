@@ -95,11 +95,14 @@ void main() {
   vec4 cell = texelFetch(uJFA, ivec2(px, py), 0);
   vec2 uv = (vec2(px, py) + 0.5) / float(uGrid);
 
-  float tone = texture(uDensity, uv).r;
+  // r = tone, g = how much picture is there (alpha), so sites are not pulled
+  // into a cut-out's empty background.
+  vec2 field = texture(uDensity, uv).rg;
+  float tone = field.r;
   float w = 0.0;
   if (cell.w > 0.5 && tone >= uToneRange.x && tone <= uToneRange.y) {
     float ink = uInvert ? tone : 1.0 - tone;
-    w = pow(max(ink, 0.0), uGamma);
+    w = pow(max(ink, 0.0), uGamma) * field.g;
   }
   vAccum = vec4(uv * w, w, 1.0);
 
@@ -196,13 +199,18 @@ export class VoronoiGPU {
     }
   }
 
-  private uploadDensity(lum: Float32Array, w: number, h: number): void {
+  private uploadDensity(lum: Float32Array, cover: Float32Array | null, w: number, h: number): void {
     const { gl } = this;
     if (this.densityTex) gl.deleteTexture(this.densityTex);
     this.densityTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.densityTex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R32F, w, h);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RED, gl.FLOAT, lum);
+    const field = new Float32Array(w * h * 2);
+    for (let i = 0; i < w * h; i++) {
+      field[i * 2] = lum[i];
+      field[i * 2 + 1] = cover ? cover[i] : 1;
+    }
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG32F, w, h);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RG, gl.FLOAT, field);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -219,7 +227,7 @@ export class VoronoiGPU {
     const grid = Math.min(1024, Math.max(256, nextPow2(Math.ceil(Math.sqrt(count * 24)))));
     const siteDim = nextPow2(Math.ceil(Math.sqrt(count)));
     this.ensureTargets(grid, siteDim);
-    this.uploadDensity(ctx.density.lum, ctx.density.width, ctx.density.height);
+    this.uploadDensity(ctx.density.lum, ctx.density.cover, ctx.density.width, ctx.density.height);
 
     const jfa = this.jfa!;
     const sites = this.sites!;
@@ -437,6 +445,7 @@ export function generateVoronoi(
     const y = v * height;
     const tone = density.sample(u * sx, v * sy);
     if (inkAt(tone, p.invertDensity, p.toneRange, mask) <= 0) continue;
+    if (density.coverAt(u * sx, v * sy) < 0.5) continue;
     write.push(x, y, tone, density.gradientAt(u * sx, v * sy), rng());
   }
   return write.finish();

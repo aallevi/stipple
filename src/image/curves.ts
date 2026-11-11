@@ -180,10 +180,13 @@ export const positionToGamma = (t: number): number => {
 };
 
 /** Tones counted into 256 bins, sampled for speed — a histogram needs shape, not every pixel. */
-export function toneHistogram(lum: Float32Array, bins = 256): Uint32Array {
+export function toneHistogram(lum: Float32Array, bins = 256, cover?: Float32Array | null): Uint32Array {
   const out = new Uint32Array(bins);
   const stride = Math.max(1, Math.floor(lum.length / 250_000));
   for (let i = 0; i < lum.length; i += stride) {
+    // A cut-out's background is not a tone of the picture; counted, it would
+    // be one tall spike at white that flattens everything else on the chart.
+    if (cover && cover[i] < 0.5) continue;
     const v = lum[i];
     out[v >= 1 ? bins - 1 : v <= 0 ? 0 : (v * bins) | 0] += 1;
   }
